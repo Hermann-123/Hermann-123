@@ -1,44 +1,53 @@
-import logging
-import requests
-import ccxt
-import pandas as pd
-import ta  # Pour les indicateurs techniques
-from telegram import Bot
-from time import sleep
+import logging import requests from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Configurations
-TELEGRAM_TOKEN = "TON_TOKEN_TELEGRAM"
-CHAT_ID = "TON_CHAT_ID"
-EXCHANGE = ccxt.binance()
+=== CONFIGURATION ===
 
-PAIR = "BTC/USDT"
-TIMEFRAME = "15m"  # Analyse sur 15 minutes
-RSI_OVERBOUGHT = 70  # Seuil de surachat
-RSI_OVERSOLD = 30  # Seuil de survente
+API_FOOTBALL_KEY = "6f994e4f607eafaaa173859839aefded" TELEGRAM_BOT_TOKEN = "7432405570:AAGqkeFs72lzzVuW_Ea_N8kKLBXBCIc7bc4"
 
-bot = Bot(token=TELEGRAM_TOKEN)
+=== LOGGING ===
 
-def get_rsi(symbol, timeframe):
-    candles = EXCHANGE.fetch_ohlcv(symbol, timeframe)
-    df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['rsi'] = ta.momentum.RSIIndicator(df['close']).rsi()
-    return df['rsi'].iloc[-1]  # Dernière valeur du RSI
+logging.basicConfig(level=logging.INFO) logger = logging.getLogger(name)
 
-def send_alert(message):
-    bot.send_message(chat_id=CHAT_ID, text=message)
+=== GET PRONOSTICS ===
 
-def check_trading_signals():
-    rsi = get_rsi(PAIR, TIMEFRAME)
-    if rsi < RSI_OVERSOLD:
-        send_alert(f"🔹 ACHAT RECOMMANDÉ : RSI = {rsi:.2f} (survendu)")
-    elif rsi > RSI_OVERBOUGHT:
-        send_alert(f"🔻 VENTE RECOMMANDÉE : RSI = {rsi:.2f} (suracheté)")
+def get_pronostics(sport): pronostics_surs = [f"✅ {sport} sûr #{i+1}" for i in range(3)] pronostics_risques = [f"⚠️ {sport} risqué #{i+1}" for i in range(3)] return pronostics_surs + pronostics_risques
 
-# Boucle pour vérifier en continu
-while True:
-    try:
-        check_trading_signals()
-        sleep(900)  # Vérification toutes les 15 minutes
-    except Exception as e:
-        logging.error(f"Erreur : {e}")
-        sleep(60)
+=== HANDLERS ===
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): keyboard = [ [InlineKeyboardButton("📅 Pronostics du jour", callback_data="day")], [InlineKeyboardButton("⚽ Football", callback_data="football")], [InlineKeyboardButton("🎾 Tennis", callback_data="tennis")], [InlineKeyboardButton("⚾ Baseball", callback_data="baseball")] ] reply_markup = InlineKeyboardMarkup(keyboard) await update.message.reply_text("Bienvenue dans ton bot de pronostics !", reply_markup=reply_markup)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query await query.answer()
+
+sport_map = {
+    "football": "Football",
+    "tennis": "Tennis",
+    "baseball": "Baseball"
+}
+
+if query.data == "day":
+    await query.edit_message_text("Choisis un sport:", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚽ Football", callback_data="football")],
+        [InlineKeyboardButton("🎾 Tennis", callback_data="tennis")],
+        [InlineKeyboardButton("⚾ Baseball", callback_data="baseball")]
+    ]))
+elif query.data in sport_map:
+    sport = sport_map[query.data]
+    tips = get_pronostics(sport)
+    text = f"🎯 *Pronostics du jour - {sport}*\n\n"
+    for t in tips[:3]:
+        text += f"✅ {t}\n"
+    text += "\n"
+    for t in tips[3:]:
+        text += f"⚠️ {t}\n"
+    await query.edit_message_text(text=text, parse_mode="Markdown")
+
+=== MAIN ===
+
+if name == 'main': app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button_handler))
+
+print("✅ Bot en cours d'exécution...")
+app.run_polling()
+
