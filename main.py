@@ -18,7 +18,7 @@ BOT_TOKEN = "7432405570:AAGqkeFs72lzzVuW_Ea_N8kKLBXBCIc7bc4"
 CHAT_ID = 5968288964
 
 # LIEN SÉCURISÉ DU CANAL
-CANAL_CIBLE = 'https://t.me/baccaratstat'
+CANAL_CIBLE =  '@statistika_baccara'
 
 # ==========================================
 # 2. MÉMOIRE GLOBALE
