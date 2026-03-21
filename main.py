@@ -11,45 +11,48 @@ from telethon.sessions import StringSession
 API_ID = 36539428
 API_HASH = 'edf612a165870ac5932ba064c104d47a'
 
-# Ta clé de session est bien intégrée ici :
+# Ta clé de session (L'ESPION invisible) :
 SESSION_STRING = "1BJWap1sBu120WWNRfQ9M4dFus6LsgU1PdkO2z2zFerIePvUk67yz1c9bfGPQFvNY-6iteTFrjn0-Lt4md7kHEjeZkFsvPIaXifXk7KxHgSd7zKOMue8SvqSXxm5J8vAhDMXvAXO6PeaH1jDTqFj6iEnFoB-4CC2dBlDr8T6fxZCbvCdPWBRIlUWIed765ZWy4A8ACmHVMaN-Z810BXxV6DTRZB8a-y2DFgmpbAxF7PIYYcykD4oKayW9eilPAQzvDFl3ii0OYnWCPg9Ff6PqUc78vps-Znf9fLHq_QgcYxA7HAdT5BTv74pr6ZfDR9Jo0xgE2tBltMpvwzaVoT2prTAUg08DrsQ="
 
+# Le TOKEN de ton vrai bot (Le PORTE-PAROLE) :
+BOT_TOKEN = "7432405570:AAGqkeFs72lzzVuW_Ea_N8kKLBXBCIc7bc4"
+
 CHAT_ID = 5968288964
-CANAL_CIBLE = 'baccaratstat' # La cible russe officielle
+CANAL_CIBLE = 'baccaratstat'
 
 # ==========================================
-# 2. MÉMOIRE DU BOT
+# 2. MÉMOIRE GLOBALE
 # ==========================================
 memoire_tendance = {
     "dernier_gagnant": None,
     "serie_en_cours": 0
 }
 
-# Initialisation du client Telethon
-client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+# Initialisation des DEUX têtes
+espion = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 
 # ==========================================
 # 3. LE FAUX SERVEUR WEB (Pour Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine de Guerre Baccarat Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine a 2 Tetes Active !')
     await writer.drain()
     writer.close()
 
 async def start_dummy_server():
     port = int(os.environ.get('PORT', 10000))
     server = await asyncio.start_server(handle_client, '0.0.0.0', port)
-    print(f"🌐 Faux serveur OK sur le port {port}")
     async with server:
         await server.serve_forever()
 
 # ==========================================
-# 4. L'ESPION & L'ANALYSE EN DIRECT
+# 4. TÊTE 1 : L'ESPION (Écoute le Russe)
 # ==========================================
-@client.on(events.NewMessage(chats=CANAL_CIBLE))
+@espion.on(events.NewMessage(chats=CANAL_CIBLE))
 async def handler_baccarat(event):
     texte_recu = event.message.text
-    print(f"📥 Nouveau tirage détecté : {texte_recu}")
+    print(f"📥 Espion a détecté : {texte_recu}")
     
     match = re.search(r'#N(\d+)\.\s*(\d+)\((.*?)\)\s*-\s*(?:▶️\s*)?(\d+)\((.*?)\)', texte_recu)
     
@@ -60,7 +63,6 @@ async def handler_baccarat(event):
         score_banque = int(match.group(4))
         cartes_banque = match.group(5)
 
-        # Détermination du gagnant
         if score_joueur > score_banque:
             gagnant_actuel = "🔵 JOUEUR"
         elif score_banque > score_joueur:
@@ -68,7 +70,6 @@ async def handler_baccarat(event):
         else:
             gagnant_actuel = "🟢 ÉGALITÉ"
 
-        # Mise à jour de la mémoire (Streak)
         global memoire_tendance
         if gagnant_actuel == memoire_tendance["dernier_gagnant"] and gagnant_actuel != "🟢 ÉGALITÉ":
             memoire_tendance["serie_en_cours"] += 1
@@ -77,7 +78,6 @@ async def handler_baccarat(event):
                 memoire_tendance["dernier_gagnant"] = gagnant_actuel
                 memoire_tendance["serie_en_cours"] = 1
 
-        # Création du message d'alerte
         message = f"🎰 **BACCARAT - Partie #{partie}**\n\n"
         message += f"🔵 **Joueur :** {score_joueur}  *(Cartes: {cartes_joueur})*\n"
         message += f"🔴 **Banque :** {score_banque}  *(Cartes: {cartes_banque})*\n\n"
@@ -86,36 +86,32 @@ async def handler_baccarat(event):
         if memoire_tendance["serie_en_cours"] >= 3:
             message += f"🔥 **SÉRIE EN COURS :** Le {gagnant_actuel} a gagné **{memoire_tendance['serie_en_cours']} fois** de suite !\n"
 
-        # Calcul du prochain jeu pour tatouer le bouton
         prochain_jeu = int(partie) + 1
         bouton_secret = f"analyse_{prochain_jeu}".encode('utf-8')
 
-        # Envoi sur Telegram avec le bouton tatoué
+        # L'Espion donne l'ordre au Bot Officiel de t'envoyer le message !
         try:
-            await client.send_message(
+            await bot_officiel.send_message(
                 CHAT_ID, 
                 message, 
                 buttons=[Button.inline(f'📊 Prédire le jeu #{prochain_jeu}', data=bouton_secret)]
             )
         except Exception as e:
-            print(f"⚠️ Erreur d'envoi : {e}")
+            print(f"⚠️ Erreur du Bot Officiel : {e}")
 
 # ==========================================
-# 5. L'ALGORITHME DE PRÉDICTION (MONTE-CARLO & KELLY)
+# 5. TÊTE 2 : LE BOT OFFICIEL (Te répond quand tu cliques)
 # ==========================================
-@client.on(events.CallbackQuery(pattern=b'^analyse_'))
+@bot_officiel.on(events.CallbackQuery(pattern=b'^analyse_'))
 async def handler_bouton(event):
     global memoire_tendance
     
-    # Extraction du numéro de jeu
     data_recue = event.data.decode('utf-8')
     numero_cible = data_recue.split('_')[1]
     
-    # Paramètres financiers
-    CAPITAL_ACTUEL = 10000  # Capital virtuel en FCFA
+    CAPITAL_ACTUEL = 10000 
     COTE_MOYENNE = 1.90
     
-    # 1. SIMULATION DE MONTE-CARLO
     serie = memoire_tendance.get("serie_en_cours", 0)
     dernier = memoire_tendance.get("dernier_gagnant", "Inconnu")
     
@@ -149,7 +145,6 @@ async def handler_bouton(event):
         choix_final = "🔵 JOUEUR"
         p_win = taux_joueur / 100
 
-    # 2. CRITÈRE DE KELLY
     b = COTE_MOYENNE - 1.0 
     q = 1.0 - p_win         
     
@@ -163,7 +158,6 @@ async def handler_bouton(event):
         mise_conseillee = int(CAPITAL_ACTUEL * fraction_kelly)
         alerte_risque = f"✅ FEU VERT : Miser {mise_conseillee} FCFA"
 
-    # 3. RÉDACTION DU RAPPORT
     rapport = f"🎯 PRÉDICTION JEU #{numero_cible} 🎯\n\n"
     rapport += "🎲 SIMULATION MONTE-CARLO (10k) :\n"
     rapport += f"Victoire Banque : {taux_banque:.1f}%\n"
@@ -176,14 +170,19 @@ async def handler_bouton(event):
     await event.answer(rapport, alert=True)
 
 # ==========================================
-# 6. LANCEMENT PRINCIPAL
+# 6. LANCEMENT SYNCHRONISÉ
 # ==========================================
 async def main():
-    print("🤖 Machine de Guerre Baccarat en ligne !")
-    await client.start()
+    print("🤖 Démarrage de la Machine à Deux Têtes...")
+    await espion.start()
+    await bot_officiel.start(bot_token=BOT_TOKEN)
     asyncio.create_task(start_dummy_server())
-    print(f"🎧 Écoute silencieuse du canal : {CANAL_CIBLE}...")
-    await client.run_until_disconnected()
+    print("🎧 Espion connecté. Bot Officiel prêt à transmettre.")
+    
+    await asyncio.gather(
+        espion.run_until_disconnected(),
+        bot_officiel.run_until_disconnected()
+    )
 
 if __name__ == '__main__':
     asyncio.run(main())
