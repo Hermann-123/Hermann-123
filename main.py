@@ -38,6 +38,14 @@ cursor.execute('''
         capital_actuel REAL
     )
 ''')
+# 🚨 NOUVELLE TABLE POUR SAUVEGARDER LES PRÉDICTIONS DU BOT
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS predictions (
+        numero_jeu INTEGER PRIMARY KEY,
+        choix_predit TEXT
+    )
+''')
+
 cursor.execute("SELECT COUNT(*) FROM finances")
 if cursor.fetchone()[0] == 0:
     cursor.execute("INSERT INTO finances (id, capital_depart, capital_actuel) VALUES (1, 10000, 10000)")
@@ -52,7 +60,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE SERVEUR DE MAINTIEN (Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund v3 (Aspirateur Blinde) Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund v4 (Feedback Loop) Active !')
     await writer.drain()
     writer.close()
 
@@ -63,14 +71,12 @@ async def start_dummy_server():
         await server.serve_forever()
 
 # ==========================================
-# 4. TÊTE 1 : L'ESPION (Enregistrement Auto)
+# 4. TÊTE 1 : L'ESPION (Enregistrement Auto + Jugement)
 # ==========================================
 @espion.on(events.NewMessage(chats=CANAL_CIBLE))
 async def handler_baccarat(event):
     texte_recu = event.message.text
     
-    # 🎯 LE NOUVEAU REGEX ULTRA-AGRESSIF ET TOLÉRANT
-    # Il ignore la casse, les espaces bizarres, les points manquants et les émojis oubliés !
     match = re.search(r'#?N?\s*(\d+)[\.\s]+(\d+)\s*\((.*?)\)[\s\-\>▶️]*(\d+)\s*\((.*?)\)', texte_recu, re.IGNORECASE)
     
     if match:
@@ -84,9 +90,27 @@ async def handler_baccarat(event):
         elif score_banque > score_joueur: gagnant_actuel = "🔴 BANQUE"
         else: gagnant_actuel = "🟢 ÉGALITÉ"
 
+        # Sauvegarde en base de données
         cursor.execute("INSERT INTO historique (numero_jeu, gagnant) VALUES (?, ?)", (int(partie), gagnant_actuel))
         conn.commit()
 
+        # 🎯 LE JUGEMENT : Le bot vérifie s'il avait fait une prédiction pour ce jeu !
+        cursor.execute("SELECT choix_predit FROM predictions WHERE numero_jeu = ?", (int(partie),))
+        prediction_enregistree = cursor.fetchone()
+        
+        if prediction_enregistree:
+            choix_du_bot = prediction_enregistree[0]
+            if choix_du_bot == gagnant_actuel:
+                verdict = f"✅ **BINGO ! PRÉDICTION GAGNANTE !**\nLe bot avait bien annoncé {choix_du_bot} pour le jeu #{partie}."
+            else:
+                verdict = f"❌ **PRÉDICTION PERDUE.**\nLe bot avait annoncé {choix_du_bot}, mais c'est {gagnant_actuel} qui est sorti au jeu #{partie}."
+            
+            try:
+                await bot_officiel.send_message(CHAT_ID, verdict)
+            except:
+                pass
+
+        # Suite classique : analyse de la tendance
         global memoire_tendance
         if gagnant_actuel == memoire_tendance["dernier_gagnant"] and gagnant_actuel != "🟢 ÉGALITÉ":
             memoire_tendance["serie_en_cours"] += 1
@@ -182,6 +206,10 @@ async def handler_bouton(event):
         choix_final = "🔴 BANQUE" if taux_banque > taux_joueur else "🔵 JOUEUR"
         p_win = (taux_banque / 100) if taux_banque > taux_joueur else (taux_joueur / 100)
         
+        # 🚨 SAUVEGARDE DE LA PRÉDICTION EN BASE DE DONNÉES
+        cursor.execute("REPLACE INTO predictions (numero_jeu, choix_predit) VALUES (?, ?)", (int(numero_cible), choix_final))
+        conn.commit()
+
         # Kelly Criterion
         COTE_MOYENNE = 1.90
         b = COTE_MOYENNE - 1.0 
@@ -221,4 +249,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-        
