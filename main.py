@@ -11,14 +11,14 @@ from telethon.sessions import StringSession
 API_ID = 36539428
 API_HASH = 'edf612a165870ac5932ba064c104d47a'
 
-# Ta clé de session (L'ESPION invisible) :
 SESSION_STRING = "1BJWap1sBu120WWNRfQ9M4dFus6LsgU1PdkO2z2zFerIePvUk67yz1c9bfGPQFvNY-6iteTFrjn0-Lt4md7kHEjeZkFsvPIaXifXk7KxHgSd7zKOMue8SvqSXxm5J8vAhDMXvAXO6PeaH1jDTqFj6iEnFoB-4CC2dBlDr8T6fxZCbvCdPWBRIlUWIed765ZWy4A8ACmHVMaN-Z810BXxV6DTRZB8a-y2DFgmpbAxF7PIYYcykD4oKayW9eilPAQzvDFl3ii0OYnWCPg9Ff6PqUc78vps-Znf9fLHq_QgcYxA7HAdT5BTv74pr6ZfDR9Jo0xgE2tBltMpvwzaVoT2prTAUg08DrsQ="
-
-# Le TOKEN de ton vrai bot (Le PORTE-PAROLE) :
 BOT_TOKEN = "7432405570:AAGqkeFs72lzzVuW_Ea_N8kKLBXBCIc7bc4"
 
+# ⚠️ TON IDENTIFIANT PERSONNEL
 CHAT_ID = 5968288964
-CANAL_CIBLE = 'baccaratstat'
+
+# LIEN SÉCURISÉ DU CANAL
+CANAL_CIBLE = 'https://t.me/baccaratstat'
 
 # ==========================================
 # 2. MÉMOIRE GLOBALE
@@ -28,7 +28,6 @@ memoire_tendance = {
     "serie_en_cours": 0
 }
 
-# Initialisation des DEUX têtes
 espion = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 
@@ -36,7 +35,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE FAUX SERVEUR WEB (Pour Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine a 2 Tetes Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nDiagnostic Actif !')
     await writer.drain()
     writer.close()
 
@@ -52,7 +51,7 @@ async def start_dummy_server():
 @espion.on(events.NewMessage(chats=CANAL_CIBLE))
 async def handler_baccarat(event):
     texte_recu = event.message.text
-    print(f"📥 Espion a détecté : {texte_recu}")
+    print(f"📥 BINGO ! Message capté par l'espion : {texte_recu}")
     
     match = re.search(r'#N(\d+)\.\s*(\d+)\((.*?)\)\s*-\s*(?:▶️\s*)?(\d+)\((.*?)\)', texte_recu)
     
@@ -89,23 +88,23 @@ async def handler_baccarat(event):
         prochain_jeu = int(partie) + 1
         bouton_secret = f"analyse_{prochain_jeu}".encode('utf-8')
 
-        # L'Espion donne l'ordre au Bot Officiel de t'envoyer le message !
         try:
+            print("🚀 Tentative d'envoi de l'analyse vers ton Telegram...")
             await bot_officiel.send_message(
                 CHAT_ID, 
                 message, 
                 buttons=[Button.inline(f'📊 Prédire le jeu #{prochain_jeu}', data=bouton_secret)]
             )
+            print("✅ Message envoyé avec succès !")
         except Exception as e:
-            print(f"⚠️ Erreur du Bot Officiel : {e}")
+            print(f"❌ ERREUR LORS DE L'ENVOI DU RÉSULTAT : {e}")
 
 # ==========================================
-# 5. TÊTE 2 : LE BOT OFFICIEL (Te répond quand tu cliques)
+# 5. TÊTE 2 : LE BOT OFFICIEL (Bouton)
 # ==========================================
 @bot_officiel.on(events.CallbackQuery(pattern=b'^analyse_'))
 async def handler_bouton(event):
     global memoire_tendance
-    
     data_recue = event.data.decode('utf-8')
     numero_cible = data_recue.split('_')[1]
     
@@ -127,7 +126,6 @@ async def handler_bouton(event):
 
     victoires_banque = 0
     victoires_joueur = 0
-    
     for _ in range(10000):
         tirage = random.uniform(0, 100)
         if tirage < prob_banque:
@@ -170,14 +168,25 @@ async def handler_bouton(event):
     await event.answer(rapport, alert=True)
 
 # ==========================================
-# 6. LANCEMENT SYNCHRONISÉ
+# 6. LANCEMENT SYNCHRONISÉ ET TEST
 # ==========================================
 async def main():
-    print("🤖 Démarrage de la Machine à Deux Têtes...")
+    print("🤖 Démarrage de la Machine...")
     await espion.start()
     await bot_officiel.start(bot_token=BOT_TOKEN)
     asyncio.create_task(start_dummy_server())
-    print("🎧 Espion connecté. Bot Officiel prêt à transmettre.")
+    
+    # LE FAMEUX TEST DE DIAGNOSTIC
+    print("\n--- TEST DE CONNEXION ---")
+    try:
+        await bot_officiel.send_message(CHAT_ID, "✅ **TEST SYSTÈME :** Mon Général, la machine de guerre est connectée et prête à espionner !")
+        print("✅ SUCCÈS : Le message de test a été envoyé sur ton Telegram !")
+    except Exception as e:
+        print(f"❌ ERREUR CRITIQUE D'ENVOI : {e}")
+        print("💡 SOLUTION : Es-tu sûr que 5968288964 est ton vrai Chat ID ? As-tu bien envoyé '/start' à ton bot ?")
+    print("-------------------------\n")
+
+    print(f"🎧 Espion en position sur le canal : {CANAL_CIBLE}...")
     
     await asyncio.gather(
         espion.run_until_disconnected(),
@@ -186,3 +195,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+    
