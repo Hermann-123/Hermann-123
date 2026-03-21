@@ -38,7 +38,6 @@ cursor.execute('''
         capital_actuel REAL
     )
 ''')
-# Initialisation des finances si la table est vide
 cursor.execute("SELECT COUNT(*) FROM finances")
 if cursor.fetchone()[0] == 0:
     cursor.execute("INSERT INTO finances (id, capital_depart, capital_actuel) VALUES (1, 10000, 10000)")
@@ -56,7 +55,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE FAUX SERVEUR WEB (Pour Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund Active et Corrigee !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund Active !')
     await writer.drain()
     writer.close()
 
@@ -85,7 +84,6 @@ async def handler_baccarat(event):
         elif score_banque > score_joueur: gagnant_actuel = "🔴 BANQUE"
         else: gagnant_actuel = "🟢 ÉGALITÉ"
 
-        # Sauvegarde en base de données
         cursor.execute("INSERT INTO historique (numero_jeu, gagnant) VALUES (?, ?)", (int(partie), gagnant_actuel))
         conn.commit()
 
@@ -114,10 +112,10 @@ async def handler_baccarat(event):
         try:
             await bot_officiel.send_message(CHAT_ID, message, buttons=[Button.inline(f'📊 Prédire le jeu #{prochain_jeu}', data=bouton_secret)])
         except Exception as e:
-            print(f"⚠️ Erreur Bot (Envoi message principal) : {e}")
+            pass
 
 # ==========================================
-# 5. TÊTE 2 : LE BOT OFFICIEL ET LE BOUTON CORRIGÉ
+# 5. TÊTE 2 : LE BOT OFFICIEL ET LE BOUTON
 # ==========================================
 @bot_officiel.on(events.NewMessage(pattern=r'^/capital\s+(\d+)'))
 async def set_capital(event):
@@ -178,38 +176,29 @@ async def export_bilan(event):
 
 @bot_officiel.on(events.CallbackQuery(pattern=b'^analyse_'))
 async def handler_bouton(event):
-    # LA CORRECTION EST ICI : Le try/except capture TOUT
     try:
         global memoire_tendance
-        
-        # On valide le clic hyper rapidement (pas de popup longue)
         await event.answer("Calcul en cours... ⏳")
         
         numero_cible = event.data.decode('utf-8').split('_')[1]
         COTE_MOYENNE = 1.90
         
-        # Vérification des finances
         cursor.execute("SELECT capital_depart, capital_actuel FROM finances WHERE id = 1")
         finances = cursor.fetchone()
         
-        if not finances:
-            await bot_officiel.send_message(event.chat_id, "⚠️ **ERREUR :** Les finances ne sont pas initialisées. Tape `/capital 10000`.")
+        if not finances or finances[0] == 0:
+            await bot_officiel.send_message(event.chat_id, "⚠️ **ERREUR :** Ton capital est à 0. Tape `/capital 10000`.")
             return
             
         depart = finances[0]
         actuel = finances[1]
-        
-        if depart == 0:
-            await bot_officiel.send_message(event.chat_id, "⚠️ **ERREUR :** Ton capital est à 0. Tape `/capital 10000`.")
-            return
 
         evolution = ((actuel - depart) / depart) * 100
         
         if evolution <= -15.0:
-            await bot_officiel.send_message(event.chat_id, "🛑 **ANALYSES BLOQUÉES.** Le Stop-Loss de -15% est atteint.", reply_to=event.message.id)
+            await bot_officiel.send_message(event.chat_id, "🛑 **ANALYSES BLOQUÉES.** Le Stop-Loss de -15% est atteint.")
             return
 
-        # Lecture Base de données pour intelligence
         cursor.execute("SELECT COUNT(*) FROM historique")
         total_parties = cursor.fetchone()[0]
         
@@ -249,7 +238,6 @@ async def handler_bouton(event):
         choix_final = "🔴 BANQUE" if taux_banque > taux_joueur else "🔵 JOUEUR"
         p_win = (taux_banque / 100) if taux_banque > taux_joueur else (taux_joueur / 100)
 
-        # Kelly Criterion
         b = COTE_MOYENNE - 1.0 
         q = 1.0 - p_win         
         fraction_kelly = ( (p_win * b) - q ) / b
@@ -262,7 +250,6 @@ async def handler_bouton(event):
             mise_conseillee = int(actuel * fraction_kelly)
             alerte_risque = f"✅ FEU VERT : Miser {mise_conseillee} FCFA"
 
-        # Le message remplace l'ancienne alerte invisible
         rapport = f"🎯 **PRÉDICTION JEU #{numero_cible}** 🎯\n\n"
         rapport += f"🧠 **MÉMOIRE** : _{texte_intelligence}_\n\n"
         rapport += "🎲 **SIMULATION MONTE-CARLO** :\n"
@@ -273,12 +260,11 @@ async def handler_bouton(event):
         rapport += f"• Solde Déclaré : {actuel} FCFA\n"
         rapport += f"• {alerte_risque}"
 
-        # On envoie le rapport directement dans le chat
-        await bot_officiel.send_message(event.chat_id, rapport, reply_to=event.message.id)
+        # J'ai retiré le "reply_to" qui causait le crash !
+        await bot_officiel.send_message(event.chat_id, rapport)
         
     except Exception as e:
-        # SI QUELQUE CHOSE PLANTE, LE BOT T'ENVOIE L'ERREUR DANS TELEGRAM
-        await bot_officiel.send_message(event.chat_id, f"❌ **ERREUR CRITIQUE BOUTON :**\n`{e}`")
+        await bot_officiel.send_message(event.chat_id, f"❌ **ERREUR CRITIQUE :**\n`{e}`")
 
 # ==========================================
 # 6. LANCEMENT
