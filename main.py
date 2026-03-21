@@ -16,14 +16,15 @@ API_HASH = 'edf612a165870ac5932ba064c104d47a'
 SESSION_STRING = "1BJWap1sBu120WWNRfQ9M4dFus6LsgU1PdkO2z2zFerIePvUk67yz1c9bfGPQFvNY-6iteTFrjn0-Lt4md7kHEjeZkFsvPIaXifXk7KxHgSd7zKOMue8SvqSXxm5J8vAhDMXvAXO6PeaH1jDTqFj6iEnFoB-4CC2dBlDr8T6fxZCbvCdPWBRIlUWIed765ZWy4A8ACmHVMaN-Z810BXxV6DTRZB8a-y2DFgmpbAxF7PIYYcykD4oKayW9eilPAQzvDFl3ii0OYnWCPg9Ff6PqUc78vps-Znf9fLHq_QgcYxA7HAdT5BTv74pr6ZfDR9Jo0xgE2tBltMpvwzaVoT2prTAUg08DrsQ="
 BOT_TOKEN = "7432405570:AAGqkeFs72lzzVuW_Ea_N8kKLBXBCIc7bc4"
 
-CHAT_ID = 5968288964
 CANAL_CIBLE = '@statistika_baccara'
 
 # ==========================================
-# 2. BASE DE DONNÉES & MÉMOIRE
+# 2. BASE DE DONNÉES MULTI-JOUEURS
 # ==========================================
 conn = sqlite3.connect('baccarat_cerveau.db', check_same_thread=False)
 cursor = conn.cursor()
+
+# Mémoire globale des jeux (La même pour tout le monde)
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS historique (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,23 +32,29 @@ cursor.execute('''
         gagnant TEXT
     )
 ''')
+# Liste des abonnés du bot
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS utilisateurs (
+        chat_id INTEGER PRIMARY KEY
+    )
+''')
+# Finances individuelles (Chacun son argent)
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS finances (
-        id INTEGER PRIMARY KEY,
+        chat_id INTEGER PRIMARY KEY,
         capital_depart REAL,
         capital_actuel REAL
     )
 ''')
+# Prédictions individuelles (Chacun ses paris)
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS predictions (
-        numero_jeu INTEGER PRIMARY KEY,
-        choix_predit TEXT
+        chat_id INTEGER,
+        numero_jeu INTEGER,
+        choix_predit TEXT,
+        PRIMARY KEY (chat_id, numero_jeu)
     )
 ''')
-
-cursor.execute("SELECT COUNT(*) FROM finances")
-if cursor.fetchone()[0] == 0:
-    cursor.execute("INSERT INTO finances (id, capital_depart, capital_actuel) VALUES (1, 10000, 10000)")
 conn.commit()
 
 memoire_tendance = {"dernier_gagnant": None, "serie_en_cours": 0}
@@ -59,7 +66,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE SERVEUR DE MAINTIEN (Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund v4 (Verdict Blinde) Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund MULTI-JOUEURS Active !')
     await writer.drain()
     writer.close()
 
@@ -70,7 +77,7 @@ async def start_dummy_server():
         await server.serve_forever()
 
 # ==========================================
-# 4. TÊTE 1 : L'ESPION (Enregistrement Auto + Jugement)
+# 4. TÊTE 1 : L'ESPION (Enregistrement + Broadcast global)
 # ==========================================
 @espion.on(events.NewMessage(chats=CANAL_CIBLE))
 async def handler_baccarat(event):
@@ -89,28 +96,32 @@ async def handler_baccarat(event):
         elif score_banque > score_joueur: gagnant_actuel = "🔴 BANQUE"
         else: gagnant_actuel = "🟢 ÉGALITÉ"
 
-        # Sauvegarde en base de données
+        # 1. Sauvegarde Globale
         cursor.execute("INSERT INTO historique (numero_jeu, gagnant) VALUES (?, ?)", (int(partie), gagnant_actuel))
         conn.commit()
 
-        # 🎯 LE JUGEMENT (Avec Boîte Noire Intégrée)
+        # 2. Le Jugement MULTI-JOUEURS (Vérifie les paris de TOUS les utilisateurs)
         try:
-            cursor.execute("SELECT choix_predit FROM predictions WHERE numero_jeu = ?", (int(partie),))
-            prediction_enregistree = cursor.fetchone()
+            cursor.execute("SELECT chat_id, choix_predit FROM predictions WHERE numero_jeu = ?", (int(partie),))
+            toutes_les_predictions = cursor.fetchall()
             
-            if prediction_enregistree:
-                choix_du_bot = prediction_enregistree[0]
-                if choix_du_bot == gagnant_actuel:
-                    verdict = f"✅ **BINGO ! PRÉDICTION GAGNANTE !**\nLe bot avait bien annoncé {choix_du_bot} pour le jeu #{partie}."
-                else:
-                    verdict = f"❌ **PRÉDICTION PERDUE.**\nLe bot avait annoncé {choix_du_bot}, mais c'est {gagnant_actuel} qui est sorti au jeu #{partie}."
+            for pred in toutes_les_predictions:
+                client_id = pred[0]
+                choix_du_bot = pred[1]
                 
-                await bot_officiel.send_message(CHAT_ID, verdict)
+                if choix_du_bot == gagnant_actuel:
+                    verdict = f"✅ **BINGO ! PRÉDICTION GAGNANTE !**\nLe jeu #{partie} est passé."
+                else:
+                    verdict = f"❌ **PRÉDICTION PERDUE.**\nLe résultat du jeu #{partie} était {gagnant_actuel}."
+                
+                try:
+                    await bot_officiel.send_message(client_id, verdict)
+                except:
+                    pass # Si l'utilisateur a bloqué le bot, on ignore
         except Exception as e:
-            # S'il y a la moindre erreur de code, il va te l'envoyer ici :
-            await bot_officiel.send_message(CHAT_ID, f"⚠️ **ERREUR SYSTÈME JUGEMENT :** {e}")
+            print(f"Erreur Jugement : {e}")
 
-        # Suite classique : analyse de la tendance
+        # 3. Calcul des tendances
         global memoire_tendance
         if gagnant_actuel == memoire_tendance["dernier_gagnant"] and gagnant_actuel != "🟢 ÉGALITÉ":
             memoire_tendance["serie_en_cours"] += 1
@@ -119,6 +130,7 @@ async def handler_baccarat(event):
                 memoire_tendance["dernier_gagnant"] = gagnant_actuel
                 memoire_tendance["serie_en_cours"] = 1
 
+        # 4. Le Mégaphone : Envoi de l'alerte à TOUTE LA LISTE D'ABONNÉS
         message = f"🎰 **BACCARAT - Partie #{partie}**\n\n"
         message += f"🔵 **Joueur :** {score_joueur}  *(Cartes: {cartes_joueur})*\n"
         message += f"🔴 **Banque :** {score_banque}  *(Cartes: {cartes_banque})*\n\n"
@@ -130,14 +142,33 @@ async def handler_baccarat(event):
         prochain_jeu = int(partie) + 1
         bouton_data = f"analyse_{prochain_jeu}".encode('utf-8')
 
-        try:
-            await bot_officiel.send_message(CHAT_ID, message, buttons=[Button.inline(f'📊 Analyser Jeu #{prochain_jeu}', data=bouton_data)])
-        except:
-            pass
+        cursor.execute("SELECT chat_id FROM utilisateurs")
+        tous_les_clients = cursor.fetchall()
+
+        for client in tous_les_clients:
+            client_id = client[0]
+            try:
+                await bot_officiel.send_message(client_id, message, buttons=[Button.inline(f'📊 Analyser Jeu #{prochain_jeu}', data=bouton_data)])
+            except:
+                pass
 
 # ==========================================
-# 5. TÊTE 2 : COMMANDES ET ANALYSES
+# 5. TÊTE 2 : COMMANDES ET ANALYSES INDIVIDUELLES
 # ==========================================
+@bot_officiel.on(events.NewMessage(pattern=r'^/start'))
+async def start_cmd(event):
+    user_id = event.chat_id
+    # Enregistre le nouvel utilisateur s'il n'existe pas
+    cursor.execute("INSERT OR IGNORE INTO utilisateurs (chat_id) VALUES (?)", (user_id,))
+    # Lui crée un compte bancaire virtuel par défaut s'il n'en a pas
+    cursor.execute("INSERT OR IGNORE INTO finances (chat_id, capital_depart, capital_actuel) VALUES (?, 10000, 10000)", (user_id,))
+    conn.commit()
+    
+    bienvenue = "👋 **Bienvenue dans le Bot Hedge Fund Baccarat !**\n\n"
+    bienvenue += "Je suis connecté au réseau d'analyse. Tu vas bientôt recevoir les prochains tirages.\n\n"
+    bienvenue += "💰 **Important :** Tape `/capital 10000` (remplace 10000 par ta vraie bankroll 1xBet) pour que je calcule tes mises sans te ruiner !"
+    await event.reply(bienvenue)
+
 @bot_officiel.on(events.NewMessage(pattern=r'^/stats'))
 async def get_stats(event):
     cursor.execute("SELECT COUNT(*) FROM historique")
@@ -167,19 +198,29 @@ async def get_stats(event):
 
 @bot_officiel.on(events.NewMessage(pattern=r'^/capital\s+(\d+)'))
 async def set_capital(event):
+    user_id = event.chat_id
     montant = float(event.pattern_match.group(1))
-    cursor.execute("UPDATE finances SET capital_depart = ?, capital_actuel = ? WHERE id = 1", (montant, montant))
+    cursor.execute("UPDATE finances SET capital_depart = ?, capital_actuel = ? WHERE chat_id = ?", (montant, montant, user_id))
     conn.commit()
-    await event.reply(f"🏦 Capital enregistré : {montant} FCFA.")
+    await event.reply(f"🏦 Ton capital personnel est enregistré : {montant} FCFA.")
 
 @bot_officiel.on(events.CallbackQuery(pattern=b'^analyse_'))
 async def handler_bouton(event):
     try:
+        user_id = event.chat_id
         await event.answer("Calcul IA... ⏳")
         numero_cible = event.data.decode('utf-8').split('_')[1]
         
-        cursor.execute("SELECT capital_actuel FROM finances WHERE id = 1")
-        actuel = cursor.fetchone()[0]
+        # Le bot regarde les finances personnelles de CE joueur précis
+        cursor.execute("SELECT capital_actuel FROM finances WHERE chat_id = ?", (user_id,))
+        finance_data = cursor.fetchone()
+        
+        if not finance_data:
+            await bot_officiel.send_message(user_id, "⚠️ **ERREUR :** Compte non initialisé. Tape `/start` puis `/capital 10000`.")
+            return
+            
+        actuel = finance_data[0]
+        
         cursor.execute("SELECT COUNT(*) FROM historique")
         total_p = cursor.fetchone()[0]
 
@@ -206,8 +247,8 @@ async def handler_bouton(event):
         choix_final = "🔴 BANQUE" if taux_banque > taux_joueur else "🔵 JOUEUR"
         p_win = (taux_banque / 100) if taux_banque > taux_joueur else (taux_joueur / 100)
         
-        # 🚨 SAUVEGARDE DE LA PRÉDICTION EN BASE DE DONNÉES (Méthode blindée)
-        cursor.execute("INSERT OR REPLACE INTO predictions (numero_jeu, choix_predit) VALUES (?, ?)", (int(numero_cible), choix_final))
+        # 🚨 SAUVEGARDE DE LA PRÉDICTION INDIVIDUELLE
+        cursor.execute("INSERT OR REPLACE INTO predictions (chat_id, numero_jeu, choix_predit) VALUES (?, ?, ?)", (user_id, int(numero_cible), choix_final))
         conn.commit()
 
         # Kelly Criterion
@@ -231,12 +272,12 @@ async def handler_bouton(event):
         rapport += f"• Victoire Joueur : {taux_joueur:.1f}%\n\n"
         rapport += f"💡 **LE CHOIX : {choix_final}**\n\n"
         rapport += "🛡️ **GESTION DU RISQUE (Kelly)** :\n"
-        rapport += f"• Solde Déclaré : {actuel} FCFA\n"
+        rapport += f"• Ton Solde : {actuel} FCFA\n"
         rapport += f"• {alerte_risque}"
         
-        await bot_officiel.send_message(event.chat_id, rapport)
+        await bot_officiel.send_message(user_id, rapport)
     except Exception as e:
-        await bot_officiel.send_message(event.chat_id, f"❌ Erreur Bouton : {e}")
+        await bot_officiel.send_message(user_id, f"❌ Erreur Bouton : {e}")
 
 # ==========================================
 # 6. LANCEMENT
