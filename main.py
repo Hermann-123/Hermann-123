@@ -11,8 +11,8 @@ from telethon.sessions import StringSession
 API_ID = 36539428
 API_HASH = 'edf612a165870ac5932ba064c104d47a'
 
-# ⚠️ TRÈS IMPORTANT : Colle ta longue clé secrète (1BJW...) entre ces guillemets !
-SESSION_STRING = "COLLE_TA_CLE_DE_SESSION_ICI"
+# Ta clé de session est bien intégrée ici :
+SESSION_STRING = "1BJWap1sBu120WWNRfQ9M4dFus6LsgU1PdkO2z2zFerIePvUk67yz1c9bfGPQFvNY-6iteTFrjn0-Lt4md7kHEjeZkFsvPIaXifXk7KxHgSd7zKOMue8SvqSXxm5J8vAhDMXvAXO6PeaH1jDTqFj6iEnFoB-4CC2dBlDr8T6fxZCbvCdPWBRIlUWIed765ZWy4A8ACmHVMaN-Z810BXxV6DTRZB8a-y2DFgmpbAxF7PIYYcykD4oKayW9eilPAQzvDFl3ii0OYnWCPg9Ff6PqUc78vps-Znf9fLHq_QgcYxA7HAdT5BTv74pr6ZfDR9Jo0xgE2tBltMpvwzaVoT2prTAUg08DrsQ="
 
 CHAT_ID = 5968288964
 CANAL_CIBLE = 'baccaratstat' # La cible russe officielle
