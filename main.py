@@ -38,7 +38,7 @@ cursor.execute('''
         capital_actuel REAL
     )
 ''')
-# Initialisation des finances si vide
+# Initialisation des finances si la table est vide
 cursor.execute("SELECT COUNT(*) FROM finances")
 if cursor.fetchone()[0] == 0:
     cursor.execute("INSERT INTO finances (id, capital_depart, capital_actuel) VALUES (1, 10000, 10000)")
@@ -56,7 +56,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE FAUX SERVEUR WEB (Pour Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund Active et Corrigee !')
     await writer.drain()
     writer.close()
 
@@ -85,6 +85,7 @@ async def handler_baccarat(event):
         elif score_banque > score_joueur: gagnant_actuel = "🔴 BANQUE"
         else: gagnant_actuel = "🟢 ÉGALITÉ"
 
+        # Sauvegarde en base de données
         cursor.execute("INSERT INTO historique (numero_jeu, gagnant) VALUES (?, ?)", (int(partie), gagnant_actuel))
         conn.commit()
 
@@ -105,7 +106,7 @@ async def handler_baccarat(event):
             message += f"🔥 **SÉRIE EN COURS :** Le {gagnant_actuel} a gagné **{memoire_tendance['serie_en_cours']} fois** de suite !\n"
 
         cursor.execute("SELECT COUNT(*) FROM historique")
-        message += f"\n📊 *Mémoire : {cursor.fetchone()[0]} parties.*"
+        message += f"\n📊 *Mémoire : {cursor.fetchone()[0]} parties enregistrées.*"
 
         prochain_jeu = int(partie) + 1
         bouton_secret = f"analyse_{prochain_jeu}".encode('utf-8')
@@ -113,36 +114,49 @@ async def handler_baccarat(event):
         try:
             await bot_officiel.send_message(CHAT_ID, message, buttons=[Button.inline(f'📊 Prédire le jeu #{prochain_jeu}', data=bouton_secret)])
         except Exception as e:
-            print(f"⚠️ Erreur Bot : {e}")
+            print(f"⚠️ Erreur Bot (Envoi message principal) : {e}")
 
 # ==========================================
-# 5. TÊTE 2 : COMMANDES FINANCIÈRES & BOUTON
+# 5. TÊTE 2 : LE BOT OFFICIEL ET LE BOUTON CORRIGÉ
 # ==========================================
 @bot_officiel.on(events.NewMessage(pattern=r'^/capital\s+(\d+)'))
 async def set_capital(event):
-    montant = float(event.pattern_match.group(1))
-    cursor.execute("UPDATE finances SET capital_depart = ?, capital_actuel = ? WHERE id = 1", (montant, montant))
-    conn.commit()
-    await event.reply(f"🏦 **Capital de départ enregistré :** {montant} FCFA.\nObjectif de gain : +20%. Limite de perte : -15%.")
+    try:
+        montant = float(event.pattern_match.group(1))
+        if montant <= 0:
+            await event.reply("⚠️ Le capital doit être supérieur à 0.")
+            return
+        cursor.execute("UPDATE finances SET capital_depart = ?, capital_actuel = ? WHERE id = 1", (montant, montant))
+        conn.commit()
+        await event.reply(f"🏦 **Capital de départ enregistré :** {montant} FCFA.\nObjectif : +20%. Limite : -15%.")
+    except Exception as e:
+        await event.reply(f"❌ Erreur Capital : {e}")
 
 @bot_officiel.on(events.NewMessage(pattern=r'^/solde\s+(\d+)'))
 async def set_solde(event):
-    nouveau_solde = float(event.pattern_match.group(1))
-    cursor.execute("UPDATE finances SET capital_actuel = ? WHERE id = 1", (nouveau_solde,))
-    conn.commit()
-    
-    cursor.execute("SELECT capital_depart FROM finances WHERE id = 1")
-    depart = cursor.fetchone()[0]
-    evolution = ((nouveau_solde - depart) / depart) * 100
-    
-    reponse = f"💼 **Nouveau solde :** {nouveau_solde} FCFA.\n📈 **Évolution :** {evolution:+.2f}%\n"
-    
-    if evolution <= -15.0:
-        reponse += "\n🛑 **ALERTE STOP-LOSS !** Tu as perdu 15% de ton capital. Arrête de jouer immédiatement pour protéger ton portefeuille."
-    elif evolution >= 20.0:
-        reponse += "\n🎯 **TAKE-PROFIT ATTEINT !** Tu as gagné 20%. Retire tes gains de 1xBet tout de suite !"
+    try:
+        nouveau_solde = float(event.pattern_match.group(1))
+        cursor.execute("UPDATE finances SET capital_actuel = ? WHERE id = 1", (nouveau_solde,))
+        conn.commit()
         
-    await event.reply(reponse)
+        cursor.execute("SELECT capital_depart FROM finances WHERE id = 1")
+        depart = cursor.fetchone()[0]
+        
+        if depart == 0:
+            await event.reply("⚠️ Erreur : Ton capital de départ est à 0. Tape /capital d'abord.")
+            return
+            
+        evolution = ((nouveau_solde - depart) / depart) * 100
+        reponse = f"💼 **Nouveau solde :** {nouveau_solde} FCFA.\n📈 **Évolution :** {evolution:+.2f}%\n"
+        
+        if evolution <= -15.0:
+            reponse += "\n🛑 **ALERTE STOP-LOSS !** Arrête de jouer immédiatement pour protéger ton portefeuille."
+        elif evolution >= 20.0:
+            reponse += "\n🎯 **TAKE-PROFIT ATTEINT !** Retire tes gains de 1xBet tout de suite !"
+            
+        await event.reply(reponse)
+    except Exception as e:
+        await event.reply(f"❌ Erreur Solde : {e}")
 
 @bot_officiel.on(events.NewMessage(pattern=r'^/bilan'))
 async def export_bilan(event):
@@ -159,99 +173,112 @@ async def export_bilan(event):
         writer.writerow(['Numero_Jeu', 'Gagnant'])
         writer.writerows(donnees)
         
-    await bot_officiel.send_file(event.chat_id, nom_fichier, caption="📊 Voici ton fichier Excel (CSV) récapitulatif !")
-    os.remove(nom_fichier) # On nettoie le serveur après l'envoi
+    await bot_officiel.send_file(event.chat_id, nom_fichier, caption="📊 Voici ton fichier Excel (CSV) !")
+    os.remove(nom_fichier)
 
 @bot_officiel.on(events.CallbackQuery(pattern=b'^analyse_'))
 async def handler_bouton(event):
-    global memoire_tendance
-    await event.answer("Analyse en cours... ⏳")
-    
-    numero_cible = event.data.decode('utf-8').split('_')[1]
-    COTE_MOYENNE = 1.90
-    
-    # Vérification des finances et du Stop-Loss
-    cursor.execute("SELECT capital_depart, capital_actuel FROM finances WHERE id = 1")
-    finances = cursor.fetchone()
-    depart = finances[0]
-    actuel = finances[1]
-    evolution = ((actuel - depart) / depart) * 100
-    
-    if evolution <= -15.0:
-        await bot_officiel.send_message(event.chat_id, "🛑 **ANALYSES BLOQUÉES.** Le Stop-Loss de -15% est atteint. Le bot te protège contre toi-même. Reviens demain et utilise `/capital` pour recommencer.", reply_to=event.message.id)
-        return
-
-    # LECTURE DE LA BASE DE DONNÉES
-    cursor.execute("SELECT COUNT(*) FROM historique")
-    total_parties = cursor.fetchone()[0]
-    
-    if total_parties > 10:
-        cursor.execute("SELECT COUNT(*) FROM historique WHERE gagnant = '🔴 BANQUE'")
-        victoires_b = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM historique WHERE gagnant = '🔵 JOUEUR'")
-        victoires_j = cursor.fetchone()[0]
-        prob_banque = max((victoires_b / total_parties) * 100, 40.0)
-        prob_joueur = max((victoires_j / total_parties) * 100, 40.0)
-        texte_intelligence = f"Algorithme ajusté sur {total_parties} parties réelles."
-    else:
-        prob_banque = 45.86
-        prob_joueur = 44.62
-        texte_intelligence = "Utilisation des probabilités théoriques."
-
-    serie = memoire_tendance.get("serie_en_cours", 0)
-    dernier = memoire_tendance.get("dernier_gagnant", "Inconnu")
-    
-    if dernier == "🔴 BANQUE" and serie >= 3:
-        prob_joueur += (serie * 1.5)
-        prob_banque -= (serie * 1.5)
-    elif dernier == "🔵 JOUEUR" and serie >= 3:
-        prob_banque += (serie * 1.5)
-        prob_joueur -= (serie * 1.5)
-
-    victoires_banque_mc = 0
-    victoires_joueur_mc = 0
-    for _ in range(10000):
-        tirage = random.uniform(0, 100)
-        if tirage < prob_banque: victoires_banque_mc += 1
-        elif tirage < (prob_banque + prob_joueur): victoires_joueur_mc += 1
-
-    taux_banque = (victoires_banque_mc / 10000) * 100
-    taux_joueur = (victoires_joueur_mc / 10000) * 100
-
-    if taux_banque > taux_joueur:
-        choix_final = "🔴 BANQUE"
-        p_win = taux_banque / 100
-    else:
-        choix_final = "🔵 JOUEUR"
-        p_win = taux_joueur / 100
-
-    # CRITÈRE DE KELLY BASÉ SUR LE VRAI CAPITAL
-    b = COTE_MOYENNE - 1.0 
-    q = 1.0 - p_win         
-    fraction_kelly = ( (p_win * b) - q ) / b
-    fraction_kelly = fraction_kelly / 2 
-    
-    if fraction_kelly <= 0:
-        alerte_risque = "🛑 RISQUE ÉLEVÉ : Ne joue pas ce tour."
-    else:
-        fraction_kelly = min(fraction_kelly, 0.05) 
-        mise_conseillee = int(actuel * fraction_kelly)
-        alerte_risque = f"✅ FEU VERT : Miser {mise_conseillee} FCFA"
-
-    rapport = f"🎯 **PRÉDICTION JEU #{numero_cible}** 🎯\n\n"
-    rapport += f"🧠 **MÉMOIRE** : _{texte_intelligence}_\n\n"
-    rapport += "🎲 **SIMULATION MONTE-CARLO** :\n"
-    rapport += f"• Victoire Banque : {taux_banque:.1f}%\n"
-    rapport += f"• Victoire Joueur : {taux_joueur:.1f}%\n\n"
-    rapport += f"💡 **LE CHOIX : {choix_final}**\n\n"
-    rapport += "🛡️ **GESTION DU RISQUE (Kelly)** :\n"
-    rapport += f"• Solde Déclaré : {actuel} FCFA\n"
-    rapport += f"• {alerte_risque}"
-
+    # LA CORRECTION EST ICI : Le try/except capture TOUT
     try:
+        global memoire_tendance
+        
+        # On valide le clic hyper rapidement (pas de popup longue)
+        await event.answer("Calcul en cours... ⏳")
+        
+        numero_cible = event.data.decode('utf-8').split('_')[1]
+        COTE_MOYENNE = 1.90
+        
+        # Vérification des finances
+        cursor.execute("SELECT capital_depart, capital_actuel FROM finances WHERE id = 1")
+        finances = cursor.fetchone()
+        
+        if not finances:
+            await bot_officiel.send_message(event.chat_id, "⚠️ **ERREUR :** Les finances ne sont pas initialisées. Tape `/capital 10000`.")
+            return
+            
+        depart = finances[0]
+        actuel = finances[1]
+        
+        if depart == 0:
+            await bot_officiel.send_message(event.chat_id, "⚠️ **ERREUR :** Ton capital est à 0. Tape `/capital 10000`.")
+            return
+
+        evolution = ((actuel - depart) / depart) * 100
+        
+        if evolution <= -15.0:
+            await bot_officiel.send_message(event.chat_id, "🛑 **ANALYSES BLOQUÉES.** Le Stop-Loss de -15% est atteint.", reply_to=event.message.id)
+            return
+
+        # Lecture Base de données pour intelligence
+        cursor.execute("SELECT COUNT(*) FROM historique")
+        total_parties = cursor.fetchone()[0]
+        
+        if total_parties > 10:
+            cursor.execute("SELECT COUNT(*) FROM historique WHERE gagnant = '🔴 BANQUE'")
+            victoires_b = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM historique WHERE gagnant = '🔵 JOUEUR'")
+            victoires_j = cursor.fetchone()[0]
+            prob_banque = max((victoires_b / total_parties) * 100, 40.0)
+            prob_joueur = max((victoires_j / total_parties) * 100, 40.0)
+            texte_intelligence = f"Algorithme ajusté sur {total_parties} parties."
+        else:
+            prob_banque = 45.86
+            prob_joueur = 44.62
+            texte_intelligence = "Probabilités théoriques (Apprentissage...)."
+
+        serie = memoire_tendance.get("serie_en_cours", 0)
+        dernier = memoire_tendance.get("dernier_gagnant", "Inconnu")
+        
+        if dernier == "🔴 BANQUE" and serie >= 3:
+            prob_joueur += (serie * 1.5)
+            prob_banque -= (serie * 1.5)
+        elif dernier == "🔵 JOUEUR" and serie >= 3:
+            prob_banque += (serie * 1.5)
+            prob_joueur -= (serie * 1.5)
+
+        victoires_banque_mc = 0
+        victoires_joueur_mc = 0
+        for _ in range(10000):
+            tirage = random.uniform(0, 100)
+            if tirage < prob_banque: victoires_banque_mc += 1
+            elif tirage < (prob_banque + prob_joueur): victoires_joueur_mc += 1
+
+        taux_banque = (victoires_banque_mc / 10000) * 100
+        taux_joueur = (victoires_joueur_mc / 10000) * 100
+
+        choix_final = "🔴 BANQUE" if taux_banque > taux_joueur else "🔵 JOUEUR"
+        p_win = (taux_banque / 100) if taux_banque > taux_joueur else (taux_joueur / 100)
+
+        # Kelly Criterion
+        b = COTE_MOYENNE - 1.0 
+        q = 1.0 - p_win         
+        fraction_kelly = ( (p_win * b) - q ) / b
+        fraction_kelly = fraction_kelly / 2 
+        
+        if fraction_kelly <= 0:
+            alerte_risque = "🛑 RISQUE ÉLEVÉ : Ne joue pas ce tour."
+        else:
+            fraction_kelly = min(fraction_kelly, 0.05) 
+            mise_conseillee = int(actuel * fraction_kelly)
+            alerte_risque = f"✅ FEU VERT : Miser {mise_conseillee} FCFA"
+
+        # Le message remplace l'ancienne alerte invisible
+        rapport = f"🎯 **PRÉDICTION JEU #{numero_cible}** 🎯\n\n"
+        rapport += f"🧠 **MÉMOIRE** : _{texte_intelligence}_\n\n"
+        rapport += "🎲 **SIMULATION MONTE-CARLO** :\n"
+        rapport += f"• Victoire Banque : {taux_banque:.1f}%\n"
+        rapport += f"• Victoire Joueur : {taux_joueur:.1f}%\n\n"
+        rapport += f"💡 **LE CHOIX : {choix_final}**\n\n"
+        rapport += "🛡️ **GESTION DU RISQUE (Kelly)** :\n"
+        rapport += f"• Solde Déclaré : {actuel} FCFA\n"
+        rapport += f"• {alerte_risque}"
+
+        # On envoie le rapport directement dans le chat
         await bot_officiel.send_message(event.chat_id, rapport, reply_to=event.message.id)
+        
     except Exception as e:
-        print(f"Erreur d'envoi : {e}")
+        # SI QUELQUE CHOSE PLANTE, LE BOT T'ENVOIE L'ERREUR DANS TELEGRAM
+        await bot_officiel.send_message(event.chat_id, f"❌ **ERREUR CRITIQUE BOUTON :**\n`{e}`")
 
 # ==========================================
 # 6. LANCEMENT
@@ -261,7 +288,7 @@ async def main():
     await espion.start()
     await bot_officiel.start(bot_token=BOT_TOKEN)
     asyncio.create_task(start_dummy_server())
-    print("🎧 Opérationnel. En attente des ordres du Général.")
+    print("🎧 Opérationnel. En attente des ordres.")
     
     await asyncio.gather(
         espion.run_until_disconnected(),
