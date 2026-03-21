@@ -38,7 +38,6 @@ cursor.execute('''
         capital_actuel REAL
     )
 ''')
-# 🚨 NOUVELLE TABLE POUR SAUVEGARDER LES PRÉDICTIONS DU BOT
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS predictions (
         numero_jeu INTEGER PRIMARY KEY,
@@ -60,7 +59,7 @@ bot_officiel = TelegramClient(StringSession(""), API_ID, API_HASH)
 # 3. LE SERVEUR DE MAINTIEN (Render)
 # ==========================================
 async def handle_client(reader, writer):
-    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund v4 (Feedback Loop) Active !')
+    writer.write(b'HTTP/1.0 200 OK\r\n\r\nMachine Hedge Fund v4 (Verdict Blinde) Active !')
     await writer.drain()
     writer.close()
 
@@ -94,21 +93,22 @@ async def handler_baccarat(event):
         cursor.execute("INSERT INTO historique (numero_jeu, gagnant) VALUES (?, ?)", (int(partie), gagnant_actuel))
         conn.commit()
 
-        # 🎯 LE JUGEMENT : Le bot vérifie s'il avait fait une prédiction pour ce jeu !
-        cursor.execute("SELECT choix_predit FROM predictions WHERE numero_jeu = ?", (int(partie),))
-        prediction_enregistree = cursor.fetchone()
-        
-        if prediction_enregistree:
-            choix_du_bot = prediction_enregistree[0]
-            if choix_du_bot == gagnant_actuel:
-                verdict = f"✅ **BINGO ! PRÉDICTION GAGNANTE !**\nLe bot avait bien annoncé {choix_du_bot} pour le jeu #{partie}."
-            else:
-                verdict = f"❌ **PRÉDICTION PERDUE.**\nLe bot avait annoncé {choix_du_bot}, mais c'est {gagnant_actuel} qui est sorti au jeu #{partie}."
+        # 🎯 LE JUGEMENT (Avec Boîte Noire Intégrée)
+        try:
+            cursor.execute("SELECT choix_predit FROM predictions WHERE numero_jeu = ?", (int(partie),))
+            prediction_enregistree = cursor.fetchone()
             
-            try:
+            if prediction_enregistree:
+                choix_du_bot = prediction_enregistree[0]
+                if choix_du_bot == gagnant_actuel:
+                    verdict = f"✅ **BINGO ! PRÉDICTION GAGNANTE !**\nLe bot avait bien annoncé {choix_du_bot} pour le jeu #{partie}."
+                else:
+                    verdict = f"❌ **PRÉDICTION PERDUE.**\nLe bot avait annoncé {choix_du_bot}, mais c'est {gagnant_actuel} qui est sorti au jeu #{partie}."
+                
                 await bot_officiel.send_message(CHAT_ID, verdict)
-            except:
-                pass
+        except Exception as e:
+            # S'il y a la moindre erreur de code, il va te l'envoyer ici :
+            await bot_officiel.send_message(CHAT_ID, f"⚠️ **ERREUR SYSTÈME JUGEMENT :** {e}")
 
         # Suite classique : analyse de la tendance
         global memoire_tendance
@@ -206,8 +206,8 @@ async def handler_bouton(event):
         choix_final = "🔴 BANQUE" if taux_banque > taux_joueur else "🔵 JOUEUR"
         p_win = (taux_banque / 100) if taux_banque > taux_joueur else (taux_joueur / 100)
         
-        # 🚨 SAUVEGARDE DE LA PRÉDICTION EN BASE DE DONNÉES
-        cursor.execute("REPLACE INTO predictions (numero_jeu, choix_predit) VALUES (?, ?)", (int(numero_cible), choix_final))
+        # 🚨 SAUVEGARDE DE LA PRÉDICTION EN BASE DE DONNÉES (Méthode blindée)
+        cursor.execute("INSERT OR REPLACE INTO predictions (numero_jeu, choix_predit) VALUES (?, ?)", (int(numero_cible), choix_final))
         conn.commit()
 
         # Kelly Criterion
@@ -236,7 +236,7 @@ async def handler_bouton(event):
         
         await bot_officiel.send_message(event.chat_id, rapport)
     except Exception as e:
-        await bot_officiel.send_message(event.chat_id, f"❌ Erreur : {e}")
+        await bot_officiel.send_message(event.chat_id, f"❌ Erreur Bouton : {e}")
 
 # ==========================================
 # 6. LANCEMENT
