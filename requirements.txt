@@ -1,1 +1,4 @@
-telethon
+pyTelegramBotAPI
+requests
+flask
+supabase
