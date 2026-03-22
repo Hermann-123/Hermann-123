@@ -11,16 +11,21 @@ from supabase import create_client, Client
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 # --- TES 4 ARMES SECRÈTES ---
+# Ton Token Telegram 
 TOKEN = "7641013539:AAEE4xxcGdzhOyHwoFwuHV7vnAbonsyMjyE"
 bot = telebot.TeleBot(TOKEN)
 MON_ID = 5968288964 
 
-API_KEY_FOOT = "7d189cebfcc245dba669f86c41ebe1be" # Le Cerveau (Football-Data)
-API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1" # Les Yeux (The-Odds-API)
+# Ta clé API Foot (Football-Data.org)
+API_KEY_FOOT = "7d189cebfcc245dba669f86c41ebe1be"
 
+# Ta clé API Odds (The-Odds-API.com)
+API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
+
+# Tes identifiants Supabase (La mémoire)
 SUPABASE_URL = "https://wrzikajiigowxnwcvxzu.supabase.co"
 SUPABASE_KEY = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
-# La Mémoire (Supabase)
+
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logging.info("✅ Base de données Supabase connectée !")
@@ -41,6 +46,7 @@ def run_flask():
 def send_welcome(message):
     if message.chat.id != MON_ID: return
     
+    # Création du clavier qui remplace le clavier du téléphone (Reply Keyboard)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("📊 Analyse de match"))
     markup.add(types.KeyboardButton("✅ Ticket Sûr"), types.KeyboardButton("🔥 VIP BETTER"))
@@ -52,6 +58,7 @@ def send_welcome(message):
         "🟢 Base de Données : Active\n\n"
         "Que veux-tu détruire aujourd'hui ?"
     )
+    # On envoie le message avec le menu attaché
     bot.send_message(message.chat.id, texte, parse_mode="Markdown", reply_markup=markup)
 
 # --- INTERACTION DES BOUTONS ---
@@ -65,16 +72,18 @@ def handle_buttons(message):
         bot.register_next_step_handler(msg, process_analyse_equipe)
         
     elif message.text == "✅ Ticket Sûr":
+        # Ce qu'il fera plus tard : Chercher une cote de 2 ou 3
         bot.send_message(message.chat.id, "🔍 *Scan des bookmakers en cours... (Fonctionnalité de combinaison en préparation)*", parse_mode="Markdown")
         
     elif message.text == "🔥 VIP BETTER":
+        # Ce qu'id fera plus tard : Chercher une cote massive de 10-30+
         bot.send_message(message.chat.id, "🚀 *Calculateur de grosses cotes activé... (Générateur d'algorithme en préparation)*", parse_mode="Markdown")
 
 # --- LE CERVEAU QUI RÉCUPÈRE TA RÉPONSE ---
 def process_analyse_equipe(message):
     nom_equipe = message.text
+    # Ce qu'il fera plus tard : Lancer l'analyse de Poisson
     bot.send_message(message.chat.id, f"⏳ D'accord, je lance mes algorithmes pour trouver les statistiques et les cotes de : **{nom_equipe}**...", parse_mode="Markdown")
-    # C'est ici que viendra notre algorithme de recherche et la loi de Poisson !
 
 # --- LANCEMENT ---
 if __name__ == "__main__":
