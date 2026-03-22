@@ -11,8 +11,8 @@ from supabase import create_client, Client
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 # --- TES 4 ARMES SECRÈTES ---
-# Ton Token Telegram 
-TOKEN = "7641013539:AAEE4xxcGdzhOyHwoFwuHV7vnAbonsyMjyE"
+# Ton TOUT NOUVEAU Token Telegram (Adieu l'erreur 409 !)
+TOKEN = "7641013539:AAFO_KqTwPCBn55Xbxu64g84HtmzAlmvk0w"
 bot = telebot.TeleBot(TOKEN)
 MON_ID = 5968288964 
 
@@ -46,7 +46,7 @@ def run_flask():
 def send_welcome(message):
     if message.chat.id != MON_ID: return
     
-    # Création du clavier qui remplace le clavier du téléphone (Reply Keyboard)
+    # Création du clavier qui remplace le clavier du téléphone
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("📊 Analyse de match"))
     markup.add(types.KeyboardButton("✅ Ticket Sûr"), types.KeyboardButton("🔥 VIP BETTER"))
@@ -72,17 +72,14 @@ def handle_buttons(message):
         bot.register_next_step_handler(msg, process_analyse_equipe)
         
     elif message.text == "✅ Ticket Sûr":
-        # Ce qu'il fera plus tard : Chercher une cote de 2 ou 3
         bot.send_message(message.chat.id, "🔍 *Scan des bookmakers en cours... (Fonctionnalité de combinaison en préparation)*", parse_mode="Markdown")
         
     elif message.text == "🔥 VIP BETTER":
-        # Ce qu'id fera plus tard : Chercher une cote massive de 10-30+
         bot.send_message(message.chat.id, "🚀 *Calculateur de grosses cotes activé... (Générateur d'algorithme en préparation)*", parse_mode="Markdown")
 
 # --- LE CERVEAU QUI RÉCUPÈRE TA RÉPONSE ---
 def process_analyse_equipe(message):
     nom_equipe = message.text
-    # Ce qu'il fera plus tard : Lancer l'analyse de Poisson
     bot.send_message(message.chat.id, f"⏳ D'accord, je lance mes algorithmes pour trouver les statistiques et les cotes de : **{nom_equipe}**...", parse_mode="Markdown")
 
 # --- LANCEMENT ---
