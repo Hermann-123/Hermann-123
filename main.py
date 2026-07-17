@@ -1,239 +1,365 @@
-import telebot
-from telebot import types
-import requests
-import os
-import threading
 import logging
-import math
-import random
-import schedule
-import time
-import traceback
-from flask import Flask
-from supabase import create_client, Client
+import os
+import asyncio
+from datetime import datetime
+from enum import Enum
+from typing import List, Dict, Tuple
 
-# --- 1. BOÎTE NOIRE ET SÉCURITÉ ---
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+import numpy as np
+from scipy.stats import poisson
 
-TOKEN = "7641013539:AAFO_KqTwPCBn55Xbxu64g84HtmzAlmvk0w"
-bot = telebot.TeleBot(TOKEN)
-MON_ID = 5968288964 
+from pydantic import BaseModel, Field
+from sqlalchemy import create_engine, String, Float, Integer, DateTime, ForeignKey, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
-API_KEY_FOOT = "7d189cebfcc245dba669f86c41ebe1be"
-API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
-SUPABASE_URL = "https://wrzikajiigowxnwcvxzu.supabase.co"
-SUPABASE_KEY = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
+from aiogram import Bot, Dispatcher, Router, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart
 
-abonnes_auto = set()
-CACHE_PREDICTIONS = {"SAFE": [], "VIP": []}
+from fastapi import FastAPI
+import uvicorn
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from contextlib import asynccontextmanager
 
-def alerte_erreur(contexte, erreur):
-    logging.error(f"CRASH [{contexte}] : {erreur}")
-    try:
-        bot.send_message(MON_ID, f"⚠️ **ALERTE FURTIVE**\n`{contexte}` : {erreur}")
-    except: pass
+# ==========================================
+# CONFIGURATION ET SÉCURITÉ
+# ==========================================
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("WallStreet_OS")
 
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except: pass
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAE9MLdu9A_rhqEwNa9bPjRWJ0BT2UsNqiA")
+# Base de données SQLite pour un démarrage immédiat (à remplacer par Supabase/PostgreSQL en prod)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./wallstreet_bot.db")
 
-app = Flask(__name__)
-@app.route('/')
-def index(): return "🚀 MOTEUR DIXON-COLES PRIME v7.0 : EN LIGNE"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+# ==========================================
+# 1. SCHÉMAS (PYDANTIC) - Validation des données
+# ==========================================
+class TeamStats(BaseModel):
+    xg_recent: float = Field(default=1.35, ge=0.0)
+    injuries_count: int = Field(default=0, ge=0)
+    defense_rating: float = Field(default=1.0)
 
-def critere_de_kelly(probabilite_pourcentage, cote_decimale):
-    p = probabilite_pourcentage / 100.0
-    q = 1.0 - p
-    b = cote_decimale - 1.0
-    if b <= 0: return 0
-    f_star = (b * p - q) / b
-    return round(max(0, (f_star * 100) / 4), 1)
+class MatchData(BaseModel):
+    match_id: str
+    league: str
+    match_date: datetime
+    home_team: str
+    away_team: str
+    home_odds: float = Field(..., gt=1.0)
+    draw_odds: float = Field(..., gt=1.0)
+    away_odds: float = Field(..., gt=1.0)
+    home_stats: TeamStats = Field(default_factory=TeamStats)
+    away_stats: TeamStats = Field(default_factory=TeamStats)
 
-# --- 3. LE TRIPLE CERVEAU (xG + DIXON-COLES + DOMICILE) ---
-def simuler_10000_matchs_prime(cote_dom, cote_ext):
-    try:
-        # CERVEAU 1 & 3 : Vrai Modèle xG et Avantage Domicile (15% de boost)
-        AVANTAGE_DOMICILE = 1.15 
-        MOYENNE_LIGUE = 1.35
+class SimulationResult(BaseModel):
+    match_id: str
+    proba_home: float
+    proba_draw: float
+    proba_away: float
+    proba_over_2_5: float
+    proba_under_3_5: float
+    proba_btts: float
+    most_likely_score: str
+    score_probability: float
+
+class TicketCategory(str, Enum):
+    ULTRA_SAFE = "ULTRA_SAFE"
+    SAFE = "SAFE"
+    PREMIUM = "PREMIUM"
+    VIP = "VIP"
+    FUN = "FUN"
+    VALUE_BET = "VALUE_BET"
+    NUL = "MATCH_NUL"
+    BTTS = "BTTS"
+    OVER_UNDER = "OVER_UNDER"
+    SCORE_EXACT = "SCORE_EXACT"
+    TOP_OPPORTUNITE = "TOP_OPPORTUNITE"
+
+class GeneratedTicket(BaseModel):
+    category: TicketCategory
+    match_id: str
+    match_title: str
+    bet_type: str
+    odds: float
+    recommended_stake_pct: float
+    ai_confidence: float
+    ai_justification: str
+
+class DailyPortfolio(BaseModel):
+    date_generated: str
+    tickets: Dict[TicketCategory, List[GeneratedTicket]]
+
+class BetAllocation(BaseModel):
+    is_value: bool
+    expected_value: float
+    kelly_stake_pct: float
+
+class AIAuditReport(BaseModel):
+    confidence_score: float
+    justification: str
+    risk_flags: List[str]
+
+# ==========================================
+# 2. BASE DE DONNÉES (SQLALCHEMY)
+# ==========================================
+class Base(DeclarativeBase):
+    pass
+
+class MatchEntity(Base):
+    __tablename__ = "matches"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    league: Mapped[str] = mapped_column(String, index=True)
+    match_date: Mapped[datetime] = mapped_column(DateTime)
+    home_team: Mapped[str] = mapped_column(String)
+    away_team: Mapped[str] = mapped_column(String)
+    home_odds: Mapped[float] = mapped_column(Float)
+    draw_odds: Mapped[float] = mapped_column(Float)
+    away_odds: Mapped[float] = mapped_column(Float)
+
+# Création des tables si elles n'existent pas
+Base.metadata.create_all(bind=engine)
+
+# ==========================================
+# 3. MOTEUR MATHÉMATIQUE (DIXON-COLES)
+# ==========================================
+class DixonColesEngine:
+    def __init__(self, rho: float = -0.15, home_advantage: float = 1.15):
+        self.rho = rho
+        self.home_advantage = home_advantage
+        self.max_goals = 6
+
+    def _calculate_tau(self, x: int, y: int, lambda_x: float, mu_y: float) -> float:
+        if x == 0 and y == 0: return 1.0 - (lambda_x * mu_y * self.rho)
+        elif x == 0 and y == 1: return 1.0 + (lambda_x * self.rho)
+        elif x == 1 and y == 0: return 1.0 + (mu_y * self.rho)
+        elif x == 1 and y == 1: return 1.0 - self.rho
+        return 1.0
+
+    def simulate(self, match: MatchData) -> SimulationResult:
+        lambda_x = (1.0 / match.home_odds) * 1.8 * match.home_stats.xg_recent * self.home_advantage
+        mu_y = (1.0 / match.away_odds) * 1.8 * match.away_stats.xg_recent
+        matrix = np.zeros((self.max_goals, self.max_goals))
+
+        for i in range(self.max_goals):
+            for j in range(self.max_goals):
+                prob_i = poisson.pmf(i, lambda_x)
+                prob_j = poisson.pmf(j, mu_y)
+                tau = self._calculate_tau(i, j, lambda_x, mu_y)
+                matrix[i, j] = prob_i * prob_j * max(tau, 0.0)
+
+        matrix /= np.sum(matrix)
         
-        force_att_dom = (1 / float(cote_dom)) * 1.8
-        force_def_ext = random.uniform(0.9, 1.2)
-        force_att_ext = (1 / float(cote_ext)) * 1.8
-        force_def_dom = random.uniform(0.8, 1.1)
+        p_home = float(np.sum(np.tril(matrix, -1)))
+        p_draw = float(np.sum(np.diag(matrix)))
+        p_away = float(np.sum(np.triu(matrix, 1)))
         
-        xg_base_dom = force_att_dom * force_def_ext * MOYENNE_LIGUE * AVANTAGE_DOMICILE
-        xg_base_ext = force_att_ext * force_def_dom * MOYENNE_LIGUE
+        p_btts = float(np.sum(matrix[1:, 1:]))
+        p_over_2_5 = sum(matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 2)
+        p_under_3_5 = sum(matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j <= 3)
+
+        best_idx = np.argmax(matrix)
+        score_x, score_y = np.unravel_index(best_idx, matrix.shape)
+
+        return SimulationResult(
+            match_id=match.match_id, proba_home=p_home * 100, proba_draw=p_draw * 100, proba_away=p_away * 100,
+            proba_over_2_5=p_over_2_5 * 100, proba_under_3_5=p_under_3_5 * 100, proba_btts=p_btts * 100,
+            most_likely_score=f"{score_x}-{score_y}", score_probability=float(matrix[score_x, score_y] * 100)
+        )
+
+# ==========================================
+# 4. INTELLIGENCE ARTIFICIELLE ET GESTION DU RISQUE
+# ==========================================
+class KellyRiskController:
+    def __init__(self, fraction: float = 0.25, max_stake_limit: float = 5.0):
+        self.fraction = fraction
+        self.max_stake_limit = max_stake_limit
+
+    def calculate_allocation(self, probability_pct: float, decimal_odds: float) -> BetAllocation:
+        p = probability_pct / 100.0
+        q = 1.0 - p
+        b = decimal_odds - 1.0
+        expected_value = (p * decimal_odds)
         
-        # Impact des absences (0% à 15% de pénalité)
-        xg_reel_dom = xg_base_dom * (1.0 - random.uniform(0.0, 0.15))
-        xg_reel_ext = xg_base_ext * (1.0 - random.uniform(0.0, 0.15))
-        
-        # CERVEAU 2 : Matrice de Poisson et Correctif Dixon-Coles
-        scores_possibles = []
-        poids_scores = []
-        rho = -0.15 # Le secret des pros pour forcer les matchs nuls fermés
-        
-        for i in range(6): # Buts Domicile
-            for j in range(6): # Buts Extérieur
-                # Loi de Poisson basique
-                prob_i = ((xg_reel_dom**i) * math.exp(-xg_reel_dom)) / math.factorial(i)
-                prob_j = ((xg_reel_ext**j) * math.exp(-xg_reel_ext)) / math.factorial(j)
-                prob_base = prob_i * prob_j
-                
-                # Ajustement Dixon-Coles (Tau) pour les petits scores
-                tau = 1.0
-                if i == 0 and j == 0: tau = 1.0 - (xg_reel_dom * xg_reel_ext * rho)
-                elif i == 0 and j == 1: tau = 1.0 + (xg_reel_dom * rho)
-                elif i == 1 and j == 0: tau = 1.0 + (xg_reel_ext * rho)
-                elif i == 1 and j == 1: tau = 1.0 - rho
-                
-                prob_finale = prob_base * max(tau, 0.0) # Sécurité mathématique
-                
-                scores_possibles.append(f"{i}-{j}")
-                poids_scores.append(prob_finale)
-                
-        # 10 000 UNIVERS PARALLÈLES BASÉS SUR LA MATRICE DIXON-COLES
-        stats = {"victoire_dom": 0, "nul": 0, "victoire_ext": 0, "moins_3_5": 0, "scores": {}}
-        
-        tirages = random.choices(scores_possibles, weights=poids_scores, k=10000)
-        
-        for score in tirages:
-            b_dom, b_ext = map(int, score.split('-'))
-            stats["scores"][score] = stats["scores"].get(score, 0) + 1
-            if b_dom > b_ext: stats["victoire_dom"] += 1
-            elif b_dom == b_ext: stats["nul"] += 1
-            else: stats["victoire_ext"] += 1
-            if (b_dom + b_ext) <= 3: stats["moins_3_5"] += 1
+        if b <= 0 or p <= 0:
+            return BetAllocation(is_value=False, expected_value=0.0, kelly_stake_pct=0.0)
+
+        f_star = (b * p - q) / b
+        if f_star <= 0:
+            return BetAllocation(is_value=False, expected_value=expected_value, kelly_stake_pct=0.0)
+
+        raw_stake_pct = (f_star * 100.0) * self.fraction
+        return BetAllocation(is_value=True, expected_value=round(expected_value, 3), kelly_stake_pct=round(min(raw_stake_pct, self.max_stake_limit), 2))
+
+class ContextEvaluator:
+    def __init__(self, use_llm_api: bool = False):
+        self.use_llm_api = use_llm_api
+
+    def evaluate(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
+        flags = []
+        confidence_modifier = 0.0
+        base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
+
+        if match.home_stats.injuries_count >= 3:
+            flags.append("Alerte: Hécatombe infirmerie à domicile.")
+            confidence_modifier -= 15.0
+        elif match.away_stats.injuries_count >= 3:
+            flags.append("Opportunité: L'équipe extérieure est décimée.")
+            if sim.proba_home > 50: confidence_modifier += 10.0
+
+        if sim.proba_draw > 30.0 and match.draw_odds > 3.20:
+            flags.append("Impasse tactique validée par le facteur Rho.")
+            confidence_modifier += 5.0
+
+        final_confidence = max(0.0, min(100.0, base_confidence + confidence_modifier))
+        justification = f"Audit complété. {' | '.join(flags) if flags else 'Analyse nominale.'}"
+
+        return AIAuditReport(confidence_score=round(final_confidence, 1), justification=justification, risk_flags=flags)
+
+# ==========================================
+# 5. USINE À TICKETS (PORTFOLIO)
+# ==========================================
+from collections import defaultdict
+
+class PortfolioFactory:
+    def __init__(self, risk_manager: KellyRiskController):
+        self.risk_manager = risk_manager
+
+    def build_daily_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]) -> DailyPortfolio:
+        portfolio_dict = defaultdict(list)
+        for match, sim, ai in evaluated_matches:
+            title = f"{match.home_team} vs {match.away_team} ({match.league})"
+            if ai.confidence_score < 40.0: continue
+
+            # Valeur & Safe
+            alloc_home = self.risk_manager.calculate_allocation(sim.proba_home, match.home_odds)
+            if alloc_home.is_value and alloc_home.expected_value > 1.08:
+                portfolio_dict[TicketCategory.VALUE_BET].append(self._create(TicketCategory.VALUE_BET, match, title, f"Victoire {match.home_team}", match.home_odds, alloc_home.kelly_stake_pct, ai))
+            if sim.proba_home > 65.0 and ai.confidence_score > 75.0:
+                cat = TicketCategory.ULTRA_SAFE if sim.proba_home > 75.0 else TicketCategory.SAFE
+                portfolio_dict[cat].append(self._create(cat, match, title, f"Victoire {match.home_team}", match.home_odds, alloc_home.kelly_stake_pct, ai))
+
+            # Nuls & Annexes
+            alloc_draw = self.risk_manager.calculate_allocation(sim.proba_draw, match.draw_odds)
+            if sim.proba_draw >= 30.0 and alloc_draw.is_value:
+                portfolio_dict[TicketCategory.NUL].append(self._create(TicketCategory.NUL, match, title, "Match Nul", match.draw_odds, alloc_draw.kelly_stake_pct, ai))
             
-        score_prob = max(stats["scores"], key=stats["scores"].get)
-        
-        return {
-            "score_exact": score_prob, 
-            "proba_score": (stats["scores"][score_prob] / 10000) * 100,
-            "proba_moins_3_5": (stats["moins_3_5"] / 10000) * 100,
-            "victoire_dom_pct": (stats["victoire_dom"] / 10000) * 100,
-            "nul_pct": (stats["nul"] / 10000) * 100,
-            "xg_reel_dom": xg_reel_dom, "xg_reel_ext": xg_reel_ext
-        }
-    except Exception as e:
-        alerte_erreur("Monte Carlo Dixon-Coles", e)
-        return None
+            if sim.score_probability > 11.0:
+                portfolio_dict[TicketCategory.SCORE_EXACT].append(self._create(TicketCategory.SCORE_EXACT, match, title, f"Score Exact : {sim.most_likely_score}", 6.50, 0.5, ai))
 
-# --- 4. L'USINE À TICKETS FURTIVE ---
-def travail_de_lombre():
-    logging.info("Moteur Prime 7.0 : Calcul Dixon-Coles en cours...")
-    url_odds = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
+        return DailyPortfolio(date_generated=datetime.utcnow().isoformat(), tickets=dict(portfolio_dict))
+
+    def _create(self, cat: TicketCategory, match: MatchData, title: str, bet: str, odds: float, stake: float, ai: AIAuditReport) -> GeneratedTicket:
+        return GeneratedTicket(category=cat, match_id=match.match_id, match_title=title, bet_type=bet, odds=round(odds, 2), recommended_stake_pct=stake, ai_confidence=ai.confidence_score, ai_justification=ai.justification)
+
+# ==========================================
+# 6. INTERFACE TELEGRAM (AIOGRAM)
+# ==========================================
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
+router = Router()
+
+# Cache global simple pour la démo
+CACHE_TICKETS = {}
+
+def main_menu_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎟️ Voir les Tickets du Jour", callback_data="menu_tickets")],
+        [InlineKeyboardButton(text="🏦 Ma Bankroll", callback_data="menu_bankroll")]
+    ])
+
+def categories_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛡️ Ultra Safe", callback_data="cat_ULTRA_SAFE"), InlineKeyboardButton(text="💎 VIP", callback_data="cat_VIP")],
+        [InlineKeyboardButton(text="🔥 Value Bets", callback_data="cat_VALUE_BET"), InlineKeyboardButton(text="🔙 Menu", callback_data="menu_main")]
+    ])
+
+@router.message(CommandStart())
+async def command_start(message: Message):
+    await message.answer("🤖 **WallStreet Betting OS**\n\nPrêt à afficher les analyses.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
+
+@router.callback_query(F.data == "menu_main")
+async def back_to_main(callback: CallbackQuery):
+    await callback.message.edit_text("Menu Principal :", reply_markup=main_menu_keyboard())
+
+@router.callback_query(F.data == "menu_tickets")
+async def show_categories(callback: CallbackQuery):
+    await callback.message.edit_text("Sélectionnez la catégorie :", reply_markup=categories_keyboard())
+
+@router.callback_query(F.data.startswith("cat_"))
+async def fetch_tickets(callback: CallbackQuery):
+    category = callback.data.replace("cat_", "")
+    tickets = CACHE_TICKETS.get(TicketCategory(category), [])
     
-    try:
-        rep_odds = requests.get(url_odds, timeout=15).json()
-        matchs = []
-        for m in rep_odds[:15]:
-            if 'bookmakers' in m and len(m['bookmakers']) > 0:
-                cotes = m['bookmakers'][0]['markets'][0]['outcomes']
-                matchs.append({
-                    "domicile": m['home_team'], "exterieur": m['away_team'],
-                    "cotes": {c['name']: c['price'] for c in cotes}
-                })
-    except: return
-
-    nouveau_safe = []
-    nouveau_vip = []
-    cote_safe, cote_vip = 1.0, 1.0
-
-    for m in matchs:
-        dom, ext = m['domicile'], m['exterieur']
-        if dom not in m['cotes'] or ext not in m['cotes']: continue
-        
-        res = simuler_10000_matchs_prime(m['cotes'][dom], m['cotes'][ext])
-        if not res: continue
-
-        # CONSTRUCTION SAFE
-        if res["victoire_dom_pct"] > 58 and len(nouveau_safe) < 2:
-            cote_th = 1.45
-            mise = critere_de_kelly(res["victoire_dom_pct"], cote_th)
-            if mise > 0:
-                nouveau_safe.append(f"🛡️ **{dom} vs {ext}**\n🎯 **Stratégie :** Victoire {dom} (DNB)\n📊 **Analyse IA :** Avantage domicile (+15%) et Modèle xG validés.\n💼 **Mise Kelly :** `{mise} %` de la bankroll")
-                cote_safe *= cote_th
-
-        # CONSTRUCTION VIP (Profite du Correctif Dixon-Coles pour les nuls)
-        if res["nul_pct"] > 30 and res["proba_moins_3_5"] > 80 and len(nouveau_vip) < 3:
-            cote_th = 3.20 # Cote moyenne d'un match nul
-            mise = critere_de_kelly(res["nul_pct"], cote_th)
-            if mise > 0:
-                nouveau_vip.append(f"⏱️ **{dom} vs {ext}**\n🎯 **Stratégie :** Match Nul (X)\n📊 **Analyse IA :** Impasse tactique détectée par l'algorithme Dixon-Coles ($\\rho$).\n💼 **Mise Kelly :** `{mise} %` de la bankroll")
-                cote_vip *= cote_th
-                
-        elif res["proba_score"] > 11.0 and len(nouveau_vip) < 3:
-            cote_th = 7.00
-            mise = critere_de_kelly(res["proba_score"], cote_th)
-            nouveau_vip.append(f"🎯 **{dom} vs {ext}**\n🎯 **Stratégie :** Score Exact {res['score_exact']}\n📊 **Analyse IA :** Ajustement Dixon-Coles appliqué sur 10k univers.\n💼 **Mise Kelly :** `{mise} %` de la bankroll")
-            cote_vip *= cote_th
-
-    if nouveau_safe: CACHE_PREDICTIONS["SAFE"] = {"texte": nouveau_safe, "cote": cote_safe}
-    if nouveau_vip: CACHE_PREDICTIONS["VIP"] = {"texte": nouveau_vip, "cote": cote_vip}
-    logging.info("Moteur Prime 7.0 : Tickets verrouillés.")
-
-# --- 5. L'AFFICHAGE DESIGN WALL STREET ---
-def envoyer_ticket_depuis_cache(chat_id, type_ticket):
-    cache = CACHE_PREDICTIONS.get(type_ticket)
-    if not cache or not cache["texte"]:
-        bot.send_message(chat_id, "📡 `[ MATRICE EN COURS ]`\n*Application du correctif Dixon-Coles sur les flux mondiaux. Patientez...* ⏳", parse_mode="Markdown")
-        threading.Thread(target=travail_de_lombre).start()
+    if not tickets:
+        await callback.message.edit_text(f"📭 Aucun ticket validé pour **{category}** aujourd'hui.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Retour", callback_data="menu_tickets")]]))
         return
 
-    titre = "🏛 **COUPON SÛR (SAFE)** 🏛" if type_ticket == "SAFE" else "👑 **PORTFEUILLE VIP ÉLITE** 👑"
-    msg = f"{titre}\n━━━━━━━━━━━━━━━━━━━━━━\n\n" + "\n\n".join(cache["texte"]) 
-    msg += f"\n\n━━━━━━━━━━━━━━━━━━━━━━\n📈 **Cote Cumulée :** `{cache['cote']:.2f}`\n🔒 *Algorithme xG Dixon-Coles validé.*"
-    bot.send_message(chat_id, msg, parse_mode="Markdown")
+    # Affiche le premier ticket en mémoire
+    t = tickets[0]
+    msg = f"✅ **{category}**\n\n⚽ **{t.match_title}**\n🔹 Pari : {t.bet_type}\n📈 Cote : {t.odds}\n💰 Mise : {t.recommended_stake_pct}% Bankroll\n🧠 IA : {t.ai_confidence}/100\n\n👉 *{t.ai_justification}*"
+    await callback.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Retour", callback_data="menu_tickets")]]), parse_mode="Markdown")
 
-# --- HORLOGE ET ROUTINES ---
-def horloge_interne():
-    schedule.every(4).hours.do(travail_de_lombre)
-    travail_de_lombre() 
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+dp.include_router(router)
 
-# --- INTERFACE TELEGRAM ---
-@bot.message_handler(commands=['start'])
-def start(message):
-    if message.chat.id != MON_ID: return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("📊 Analyse manuelle", "⏰ Pilote Automatique")
-    markup.add("✅ Ticket Sûr", "🔥 VIP BETTER")
+# ==========================================
+# 7. ORCHESTRATEUR GLOBAL (FASTAPI & SCHEDULER)
+# ==========================================
+math_engine = DixonColesEngine()
+ai_evaluator = ContextEvaluator()
+risk_manager = KellyRiskController()
+ticket_factory = PortfolioFactory(risk_manager)
+
+def mock_data_ingestion() -> List[MatchData]:
+    """Simulation de données pour déclencher l'algorithme."""
+    return [
+        MatchData(match_id="M_1001", league="Premier League", match_date=datetime.utcnow(), home_team="Arsenal", away_team="Chelsea", home_odds=1.60, draw_odds=4.00, away_odds=5.50)
+    ]
+
+async def run_daily_pipeline():
+    global CACHE_TICKETS
+    logger.info("Démarrage du Pipeline Quotidien...")
+    matches = mock_data_ingestion()
+    evaluated = []
+
+    for match in matches:
+        sim = math_engine.simulate(match)
+        ai = ai_evaluator.evaluate(match, sim)
+        evaluated.append((match, sim, ai))
+
+    portfolio = ticket_factory.build_daily_portfolio(evaluated)
+    CACHE_TICKETS = portfolio.tickets
+    logger.info("Pipeline terminé. Cache mis à jour.")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Lancement du Scheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_daily_pipeline, 'cron', hour=4, minute=0)
+    scheduler.start()
     
-    msg_accueil = (
-        "🏛 **BIENVENUE DANS L'ÉLITE** 🏛\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡️ *Serveur Institutionnel v7.0 : CONNECTÉ*\n"
-        "⚙️ *Matrice Mathématique (Dixon-Coles) : ACTIVE*\n"
-        "🛡 *Gestion Financière (Kelly) : SÉCURISÉE*\n\n"
-        "*Vous êtes sur un réseau crypté.*\n"
-        "Sélectionnez une option sur votre terminal ⬇️"
-    )
-    bot.send_message(message.chat.id, msg_accueil, reply_markup=markup, parse_mode="Markdown")
+    # Force un premier run au lancement
+    asyncio.create_task(run_daily_pipeline())
 
-@bot.message_handler(func=lambda m: True)
-def router(message):
-    if message.chat.id != MON_ID: return
-    if message.text == "⏰ Pilote Automatique":
-        bot.send_message(message.chat.id, "✅ **PILOTE AUTOMATIQUE ACTIVÉ** !\nLa machine est autonome.", parse_mode="Markdown")
-    elif message.text == "✅ Ticket Sûr": envoyer_ticket_depuis_cache(message.chat.id, "SAFE")
-    elif message.text == "🔥 VIP BETTER": envoyer_ticket_depuis_cache(message.chat.id, "VIP")
-    elif message.text == "📊 Analyse manuelle":
-        msg = bot.send_message(message.chat.id, "📝 Entrez le match (ex: Real vs Milan) :")
-        bot.register_next_step_handler(msg, process_manual)
+    # 2. Lancement du Bot Telegram
+    bot_task = asyncio.create_task(dp.start_polling(bot))
+    logger.info("Système complet en ligne.")
 
-def process_manual(message):
-    bot.send_message(message.chat.id, "⚙️ Simulation Furtive en cours (Application Matrice Dixon-Coles)...")
-    res = simuler_10000_matchs_prime(2.0, 3.5)
-    bot.send_message(message.chat.id, f"🎯 **VERDICT IA : {res['score_exact']}**\n\n🧠 *Analyse :* Force ajustée avec Avantage Domicile. La matrice de Dixon-Coles a corrigé les probabilités de matchs nuls.", parse_mode="Markdown")
+    yield
+
+    # 3. Arrêt propre
+    scheduler.shutdown()
+    bot_task.cancel()
+    await bot.session.close()
+
+app = FastAPI(title="WallStreet OS", lifespan=lifespan)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "online"}
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    threading.Thread(target=horloge_interne, daemon=True).start()
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
-        
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
