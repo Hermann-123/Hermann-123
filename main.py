@@ -12,7 +12,7 @@ from scipy.stats import poisson
 
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
-from openai import AsyncOpenAI
+import google.generativeai as genai
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -31,16 +31,22 @@ from contextlib import asynccontextmanager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAGQpl_qZ1fOwM_KJMXhORHI5EBDfFUEsvU")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7641013539:AAFO_KqTwPCBn55Xbxu64g84HtmzAlmvk0w")
 ADMIN_ID = 5968288964
 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 SUPABASE_URL = "https://wrzikajiigowxnwcvxzu.supabase.co"
 SUPABASE_KEY = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-votre-cle-api-chatgpt-ici")
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# Connecteur Gemini (Via variable d'environnement Render)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "votre-cle-api-gemini-ici")
+if GEMINI_API_KEY and not GEMINI_API_KEY.startswith("votre-cle"):
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    gemini_model = None
 
+# Connexion Base de données distante
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logger.info("✅ Connecté à Supabase")
@@ -160,7 +166,7 @@ class DixonColesEngine:
         )
 
 # ==========================================
-# 4. GESTION DU RISQUE & ANALYSE ChatGPT
+# 4. GESTION DU RISQUE & ANALYSE GEMINI
 # ==========================================
 class KellyRiskController:
     def __init__(self, fraction: float = 0.25, max_stake_limit: float = 5.0):
@@ -182,13 +188,13 @@ class KellyRiskController:
         return BetAllocation(is_value=True, expected_value=round(expected_value, 3), kelly_stake_pct=round(min(raw_stake_pct, self.max_stake_limit), 2))
 
 class ContextEvaluator:
-    def __init__(self, use_chatgpt: bool = True):
-        self.use_chatgpt = use_chatgpt
+    def __init__(self, use_gemini: bool = True):
+        self.use_gemini = use_gemini
 
     async def evaluate(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
-        if self.use_chatgpt and OPENAI_API_KEY and not OPENAI_API_KEY.startswith("sk-votre"):
+        if self.use_gemini and gemini_model:
             try:
                 prompt = f"""
                 Agis en tant qu'analyste professionnel de paris sportifs.
@@ -203,19 +209,13 @@ class ContextEvaluator:
                 Ton ton doit être expert, analytique et direct.
                 """
                 
-                response = await openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "Tu es un expert en data-analyse de football."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    timeout=10
-                )
-                justification = response.choices[0].message.content.strip()
+                # Appel asynchrone à l'API Gemini
+                response = await gemini_model.generate_content_async(prompt)
+                justification = response.text.strip()
                 return AIAuditReport(confidence_score=round(base_confidence + 10.0, 1), justification=justification, risk_flags=[])
             
             except Exception as e:
-                logger.error(f"Erreur API ChatGPT : {e}. Bascule sur heuristique locale.")
+                logger.error(f"Erreur API Gemini : {e}. Bascule sur heuristique locale.")
                 return self._fallback_evaluate(match, sim, base_confidence)
         else:
             return self._fallback_evaluate(match, sim, base_confidence)
@@ -312,7 +312,7 @@ def main_keyboard():
 @router.message(CommandStart())
 async def command_start(message: Message):
     if message.from_user.id != ADMIN_ID: return
-    text = "🏛 **SERVEUR INSTITUTIONNEL v7.0**\n\n⚡️ Flux The Odds API : Connecté\n⚙️ Dixon-Coles : Actif\n🤖 IA ChatGPT : Connectée\n\nQue voulez-vous consulter ?"
+    text = "🏛 **SERVEUR INSTITUTIONNEL v7.0**\n\n⚡️ Flux The Odds API : Connecté\n⚙️ Dixon-Coles : Actif\n🤖 IA Gemini : Connectée\n\nQue voulez-vous consulter ?"
     await message.answer(text, reply_markup=main_keyboard(), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("get_"))
@@ -346,7 +346,7 @@ async def process_manual(message: Message, state: FSMContext):
     sim = math_engine.simulate(fake_match)
     ai_report = await ai_evaluator.evaluate(fake_match, sim)
     
-    response = f"🎯 **VERDICT IA : Score exact probable {sim.most_likely_score}**\nProba Victoire 1 : {sim.proba_home:.1f}%\nProba Nul X : {sim.proba_draw:.1f}%\n\n🤖 **Avis ChatGPT :** {ai_report.justification}"
+    response = f"🎯 **VERDICT IA : Score exact probable {sim.most_likely_score}**\nProba Victoire 1 : {sim.proba_home:.1f}%\nProba Nul X : {sim.proba_draw:.1f}%\n\n🤖 **Avis Gemini :** {ai_report.justification}"
     await message.answer(response, parse_mode="Markdown")
     await state.clear()
 
@@ -356,20 +356,16 @@ dp.include_router(router)
 # 8. ORCHESTRATEUR GLOBAL (FASTAPI & SCHEDULER)
 # ==========================================
 math_engine = DixonColesEngine()
-ai_evaluator = ContextEvaluator(use_chatgpt=True)
+ai_evaluator = ContextEvaluator(use_gemini=True)
 risk_manager = KellyRiskController()
 ticket_factory = PortfolioFactory(risk_manager)
 
 async def run_daily_pipeline():
-    # === LA CORRECTION DU TIMEOUT EST ICI ===
-    # On laisse 15 secondes au serveur FastAPI pour ouvrir le port
-    # AVANT de bloquer le système avec le téléchargement lourd des matchs
     await asyncio.sleep(15)
     
     global CACHE_PORTFOLIO
-    logger.info("🔄 Démarrage du Pipeline de Recherche avec IA ChatGPT...")
+    logger.info("🔄 Démarrage du Pipeline de Recherche avec IA Gemini...")
     
-    # On exécute la requête web bloquante (requests) dans un autre thread
     matches = await asyncio.to_thread(fetch_real_matches)
     
     if not matches:
@@ -393,7 +389,7 @@ async def run_daily_pipeline():
             }).execute()
         except: pass
 
-    logger.info("✅ Pipeline terminé. Cache mis à jour avec les avis de ChatGPT.")
+    logger.info("✅ Pipeline terminé. Cache mis à jour avec les avis de Gemini.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -416,7 +412,7 @@ app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
 @app.get("/")
 async def health_check():
-    return {"status": "MOTEUR DIXON-COLES PRIME v7.0 : EN LIGNE (ChatGPT Connecté)"}
+    return {"status": "MOTEUR DIXON-COLES PRIME v7.0 : EN LIGNE (Gemini Connecté)"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
