@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAHg3bjFyrZHBmnTEtFSGDtBOXJJaFj0Puc")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAENOX3pa6pIgxoq8yQAlEq2WXEznEHjQCs")
 ADMIN_ID = 5968288964
 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
@@ -52,7 +52,7 @@ try:
     logger.info("✅ Connecté à Supabase")
 except Exception as e:
     logger.error(f"❌ Erreur Supabase : {e}")
-    supabase = None
+    supabase = None #
 
 CACHE_PORTFOLIO = {}
 
