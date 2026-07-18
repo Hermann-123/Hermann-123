@@ -38,11 +38,9 @@ API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 SUPABASE_URL = "https://wrzikajiigowxnwcvxzu.supabase.co"
 SUPABASE_KEY = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
 
-# Connecteur ChatGPT (Via variable d'environnement Render)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-votre-cle-api-chatgpt-ici")
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# Connexion Base de données distante
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logger.info("✅ Connecté à Supabase")
@@ -363,10 +361,17 @@ risk_manager = KellyRiskController()
 ticket_factory = PortfolioFactory(risk_manager)
 
 async def run_daily_pipeline():
+    # === LA CORRECTION DU TIMEOUT EST ICI ===
+    # On laisse 15 secondes au serveur FastAPI pour ouvrir le port
+    # AVANT de bloquer le système avec le téléchargement lourd des matchs
+    await asyncio.sleep(15)
+    
     global CACHE_PORTFOLIO
     logger.info("🔄 Démarrage du Pipeline de Recherche avec IA ChatGPT...")
     
-    matches = fetch_real_matches()
+    # On exécute la requête web bloquante (requests) dans un autre thread
+    matches = await asyncio.to_thread(fetch_real_matches)
+    
     if not matches:
         logger.warning("Aucun match trouvé.")
         return
