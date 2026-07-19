@@ -33,7 +33,7 @@ from contextlib import asynccontextmanager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAHR4UHL70gm1QmYAGzNRmA-QIwlbtFlzx0")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAFESIY_3iXyT7MB3jRo6SwfRm98cxjfaQo")
 ADMIN_ID = 5968288964
 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
