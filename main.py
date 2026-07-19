@@ -12,7 +12,9 @@ from scipy.stats import poisson
 
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
-import google.generativeai as genai
+
+# Importation de la toute nouvelle librairie Google
+from google import genai
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -31,20 +33,19 @@ from contextlib import asynccontextmanager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAENOX3pa6pIgxoq8yQAlEq2WXEznEHjQCs")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAHR4UHL70gm1QmYAGzNRmA-QIwlbtFlzx0")
 ADMIN_ID = 5968288964
 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 SUPABASE_URL = "https://wrzikajiigowxnwcvxzu.supabase.co"
 SUPABASE_KEY = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
 
-# Connecteur Gemini (Via variable d'environnement Render)
+# Connecteur Gemini (Nouvelle syntaxe)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "votre-cle-api-gemini-ici")
 if GEMINI_API_KEY and not GEMINI_API_KEY.startswith("votre-cle"):
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
-    gemini_model = None
+    gemini_client = None
 
 # Connexion Base de données distante
 try:
@@ -52,7 +53,7 @@ try:
     logger.info("✅ Connecté à Supabase")
 except Exception as e:
     logger.error(f"❌ Erreur Supabase : {e}")
-    supabase = None #
+    supabase = None 
 
 CACHE_PORTFOLIO = {}
 
@@ -194,7 +195,7 @@ class ContextEvaluator:
     async def evaluate(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
-        if self.use_gemini and gemini_model:
+        if self.use_gemini and gemini_client:
             try:
                 prompt = f"""
                 Agis en tant qu'analyste professionnel de paris sportifs.
@@ -209,8 +210,11 @@ class ContextEvaluator:
                 Ton ton doit être expert, analytique et direct.
                 """
                 
-                # Appel asynchrone à l'API Gemini
-                response = await gemini_model.generate_content_async(prompt)
+                # LA CORRECTION EST ICI : Appel du nouveau modèle gemini-2.0-flash
+                response = await gemini_client.aio.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt,
+                )
                 justification = response.text.strip()
                 return AIAuditReport(confidence_score=round(base_confidence + 10.0, 1), justification=justification, risk_flags=[])
             
@@ -377,6 +381,10 @@ async def run_daily_pipeline():
         sim = math_engine.simulate(match)
         ai = await ai_evaluator.evaluate(match, sim)
         evaluated.append((match, sim, ai))
+        
+        # LA 2EME CORRECTION EST ICI : 4 secondes de pause entre chaque match
+        # pour respecter le forfait gratuit de Gemini
+        await asyncio.sleep(4)
 
     CACHE_PORTFOLIO = ticket_factory.build_daily_portfolio(evaluated)
     
