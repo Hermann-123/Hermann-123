@@ -9,59 +9,72 @@ from contextlib import asynccontextmanager
 from app.core import settings, logger
 import app.core as core_module
 from app.models import MatchData, SportType
-from app.services import DixonColesEngine, AIRiskManager, TicketFactory
+from app.services import DixonColesEngine, BasketballEngine, AIRiskManager, TicketFactory
 from app.bot import bot, dp
 
 # Instanciation des services métiers
-math_engine = DixonColesEngine()
+soccer_engine = DixonColesEngine()
+basket_engine = BasketballEngine()
 ai_manager = AIRiskManager()
 ticket_factory = TicketFactory()
 
-async def fetch_live_matches():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={settings.API_KEY_ODDS}&regions=eu&markets=h2h"
+async def fetch_live_matches(sport_key: str, sport_type: SportType) -> list:
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={settings.API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=15.0)
             if response.status_code == 200:
-                for m in response.json()[:10]:
+                for m in response.json()[:8]: # On prend les 8 premiers matchs de chaque sport
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
                         cotes = {c['name']: c['price'] for c in m['bookmakers'][0]['markets'][0]['outcomes']}
                         home, away = m['home_team'], m['away_team']
-                        if home in cotes and away in cotes and 'Draw' in cotes:
+                        
+                        # Gestion des cotes (avec ou sans Draw)
+                        if home in cotes and away in cotes:
+                            draw_odds = cotes.get('Draw', None)
                             matches.append(MatchData(
-                                match_id=m['id'], sport=SportType.SOCCER, league=m['sport_title'],
+                                match_id=m['id'], sport=sport_type, league=m['sport_title'],
                                 match_date=datetime.now(), home_team=home, away_team=away,
-                                home_odds=cotes[home], draw_odds=cotes['Draw'], away_odds=cotes[away]
+                                home_odds=cotes[home], draw_odds=draw_odds, away_odds=cotes[away]
                             ))
     except Exception as e:
-        logger.error(f"Erreur The Odds API: {e}")
+        logger.error(f"Erreur The Odds API ({sport_type.value}): {e}")
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 Démarrage du Scan Institutionnel (Data + Maths + IA Groq)...")
-    matches = await fetch_live_matches()
+    logger.info("🔄 Démarrage du Scan Multi-Sports...")
     
+    # 1. Collecte des matchs
+    soccer_matches = await fetch_live_matches("soccer_epl", SportType.SOCCER) # Premier League
+    basket_matches = await fetch_live_matches("basketball_nba", SportType.BASKETBALL) # NBA
+    all_matches = soccer_matches + basket_matches
+    
+    # 2. Analyse mathématique et IA
     evaluated = []
-    for match in matches:
-        sim = math_engine.simulate(match)
+    for match in all_matches:
+        if match.sport == SportType.SOCCER:
+            sim = soccer_engine.simulate(match)
+        else:
+            sim = basket_engine.simulate(match)
+            
         ai_report = await ai_manager.evaluate_match(match, sim)
         evaluated.append((match, sim, ai_report))
-        await asyncio.sleep(2) # Pause Groq
+        await asyncio.sleep(2) # Pause pour l'API Groq
 
-    # Mise à jour du cache global partagé
+    # 3. Construction des Portefeuilles
     core_module.CACHE_PORTFOLIO = ticket_factory.build_portfolio(evaluated)
-    logger.info("✅ Portefeuilles mis à jour ! Filtre IA appliqué.")
+    logger.info("✅ Scan Multi-Sports terminé et cache mis à jour !")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Démarrage des tâches de fond
     scheduler = AsyncIOScheduler()
     scheduler.add_job(run_platform_pipeline, 'interval', hours=4)
     scheduler.start()
+    
+    # Lancement immédiat au démarrage
     asyncio.create_task(run_platform_pipeline())
 
-    # Démarrage de Telegram
     bot_task = asyncio.create_task(dp.start_polling(bot))
     logger.info("🚀 WallStreet OS est EN LIGNE.")
     yield
@@ -73,7 +86,7 @@ app = FastAPI(title="WallStreet OS - AI Betting Platform", lifespan=lifespan)
 
 @app.get("/")
 async def health():
-    return {"status": "ONLINE", "architecture": "Modulaire", "ai": "Groq Llama 3"}
+    return {"status": "ONLINE", "architecture": "Multi-Sports (Foot & Basket)"}
 
 if __name__ == "__main__":
     import os
