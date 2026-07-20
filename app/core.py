@@ -1,15 +1,16 @@
 import logging
 import os
 from pydantic_settings import BaseSettings
-from supabase import create_client, Client
 
 class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: str = "7432405570:AAHS1Kax5wVzccvg4gq-U8yMKQPY8lufyVA"
-    ADMIN_ID: int = 5968288964
+    TELEGRAM_BOT_TOKEN: str = "8658287331:AAGFmhAcBSoNHw7OvcNT0jaS3t6OsLpTzAw"
+    ADMIN_ID: int = -1003982738017
     API_KEY_ODDS: str = "55a670c7b44c3dcc3c9750e9f5c51da1"
+    
+    # REMPLACEZ LE NUMÉRO CI-DESSOUS PAR L'ID DE VOTRE CANAL (N'oubliez pas le -100 au début)
+    ARCHIVE_CHANNEL_ID: str = "-100VOTRE_ID_ICI" 
+    
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    SUPABASE_URL: str = "https://wrzikajiigowxnwcvxzu.supabase.co"
-    SUPABASE_KEY: str = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
 
     class Config:
         env_file = ".env"
@@ -21,11 +22,3 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("WallStreet_OS")
 
 CACHE_PORTFOLIO = {}
-
-# INITIALISATION DE LA BASE DE DONNÉES
-try:
-    supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-    logger.info("✅ Connexion à Supabase établie avec succès.")
-except Exception as e:
-    supabase = None
-    logger.error(f"❌ Impossible de se connecter à Supabase : {e}")
