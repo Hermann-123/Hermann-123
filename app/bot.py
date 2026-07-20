@@ -1,17 +1,14 @@
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 
 from app.core import settings, CACHE_PORTFOLIO
-from app.models import TicketCategory
+from app.models import TicketCategory, SportType
 
 bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-# LE NOUVEAU CLAVIER PERSISTANT (REPLY KEYBOARD)
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -34,7 +31,7 @@ def football_menu():
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     if message.from_user.id != settings.ADMIN_ID: return
-    text = "🏛 **WallStreet OS v8.0**\n\nL'interface Institutionnelle est prête. Utilisez le clavier ci-dessous."
+    text = "🏛 **WallStreet OS v8.0**\n\nBienvenue dans votre Hedge Fund sportif. Le scan de la NBA et du Football est en cours..."
     await message.answer(text, reply_markup=main_menu(), parse_mode="Markdown")
 
 @router.message(F.text == "🔙 Retour Principal")
@@ -48,13 +45,31 @@ async def open_football(message: Message):
 @router.message(F.text == "🛡️ Ultra Safe (Foot)")
 async def get_ultra_safe(message: Message):
     tickets = CACHE_PORTFOLIO.get(TicketCategory.ULTRA_SAFE, [])
-    if not tickets:
-        await message.answer("📭 Aucun ticket Ultra Safe validé par l'IA aujourd'hui.")
+    # Filtrer uniquement le football
+    soccer_tickets = [t for t in tickets if t.sport == SportType.SOCCER]
+    
+    if not soccer_tickets:
+        await message.answer("📭 Aucun ticket Foot Ultra Safe validé par l'IA aujourd'hui.")
         return
 
-    res = "🛡️ **PORTFEUILLE ULTRA SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    for t in tickets[:3]:
+    res = "🛡️ **FOOTBALL : ULTRA SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for t in soccer_tickets[:3]:
         res += f"⚽ **{t.match_title}**\n🎯 Pari: `{t.bet_type}` | Cote: `{t.odds}`\n🤖 IA ({t.ai_confidence}%): {t.ai_justification}\n\n"
+    await message.answer(res, parse_mode="Markdown")
+
+@router.message(F.text == "🏀 Basket")
+async def get_basket_safe(message: Message):
+    # Pour le basket, nous avons classé les opportunités dans SAFE
+    tickets = CACHE_PORTFOLIO.get(TicketCategory.SAFE, [])
+    basket_tickets = [t for t in tickets if t.sport == SportType.BASKETBALL]
+    
+    if not basket_tickets:
+        await message.answer("📭 Aucun ticket Basket validé par l'IA aujourd'hui.")
+        return
+
+    res = "🏀 **BASKETBALL : TICKETS SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for t in basket_tickets[:3]:
+        res += f"🇺🇸 **{t.match_title}**\n🎯 Pari: `{t.bet_type}` | Cote: `{t.odds}`\n🤖 IA ({t.ai_confidence}%): {t.ai_justification}\n\n"
     await message.answer(res, parse_mode="Markdown")
 
 dp.include_router(router)
