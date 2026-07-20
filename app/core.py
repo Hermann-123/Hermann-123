@@ -3,7 +3,7 @@ import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: str = os.getenv("7432405570:AAFmZS72omB2MVzv7HjMM1z0s9eDzGZkKyU")
+    TELEGRAM_BOT_TOKEN: str = os.getenv("7432405570:AAHS1Kax5wVzccvg4gq-U8yMKQPY8lufyVA")
     ADMIN_ID: int = 5968288964
     API_KEY_ODDS: str = "55a670c7b44c3dcc3c9750e9f5c51da1"
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
