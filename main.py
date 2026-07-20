@@ -25,12 +25,10 @@ async def fetch_live_matches(sport_key: str, sport_type: SportType) -> list:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=15.0)
             if response.status_code == 200:
-                for m in response.json()[:8]: # On prend les 8 premiers matchs de chaque sport
+                for m in response.json()[:8]: # Scan limité pour la vitesse
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
                         cotes = {c['name']: c['price'] for c in m['bookmakers'][0]['markets'][0]['outcomes']}
                         home, away = m['home_team'], m['away_team']
-                        
-                        # Gestion des cotes (avec ou sans Draw)
                         if home in cotes and away in cotes:
                             draw_odds = cotes.get('Draw', None)
                             matches.append(MatchData(
@@ -45,12 +43,10 @@ async def fetch_live_matches(sport_key: str, sport_type: SportType) -> list:
 async def run_platform_pipeline():
     logger.info("🔄 Démarrage du Scan Multi-Sports...")
     
-    # 1. Collecte des matchs
-    soccer_matches = await fetch_live_matches("soccer_epl", SportType.SOCCER) # Premier League
-    basket_matches = await fetch_live_matches("basketball_nba", SportType.BASKETBALL) # NBA
+    soccer_matches = await fetch_live_matches("soccer_epl", SportType.SOCCER)
+    basket_matches = await fetch_live_matches("basketball_nba", SportType.BASKETBALL)
     all_matches = soccer_matches + basket_matches
     
-    # 2. Analyse mathématique et IA
     evaluated = []
     for match in all_matches:
         if match.sport == SportType.SOCCER:
@@ -60,11 +56,30 @@ async def run_platform_pipeline():
             
         ai_report = await ai_manager.evaluate_match(match, sim)
         evaluated.append((match, sim, ai_report))
-        await asyncio.sleep(2) # Pause pour l'API Groq
+        await asyncio.sleep(2) # Pause Groq
 
-    # 3. Construction des Portefeuilles
+    # Construction des Portefeuilles
     core_module.CACHE_PORTFOLIO = ticket_factory.build_portfolio(evaluated)
-    logger.info("✅ Scan Multi-Sports terminé et cache mis à jour !")
+    
+    # 🗄️ ARCHIVAGE DANS LE CANAL TELEGRAM
+    if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
+        for category, tickets in core_module.CACHE_PORTFOLIO.items():
+            for ticket in tickets:
+                message_text = (
+                    f"🗄️ **ARCHIVE | {category.value}**\n"
+                    f"🏅 Sport: {ticket.sport.value.upper()}\n"
+                    f"⚽ Match: {ticket.match_title}\n"
+                    f"🎯 Pari: `{ticket.bet_type}`\n"
+                    f"📈 Cote: `{ticket.odds}`\n"
+                    f"🤖 Avis IA: {ticket.ai_justification}"
+                )
+                try:
+                    await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=message_text)
+                    await asyncio.sleep(1) # Éviter le spam Telegram
+                except Exception as e:
+                    logger.error(f"Erreur envoi archive Telegram: {e}")
+
+    logger.info("✅ Scan Multi-Sports et Archivage terminés !")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,7 +87,6 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_platform_pipeline, 'interval', hours=4)
     scheduler.start()
     
-    # Lancement immédiat au démarrage
     asyncio.create_task(run_platform_pipeline())
 
     bot_task = asyncio.create_task(dp.start_polling(bot))
