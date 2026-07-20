@@ -7,4 +7,3 @@ APScheduler
 aiogram
 requests
 supabase
-google-genai
