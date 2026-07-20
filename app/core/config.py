@@ -1,29 +1,21 @@
 import logging
+import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    # Telegram
-    TELEGRAM_BOT_TOKEN: str
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAENOX3pa6pIgxoq8yQAlEq2WXEznEHjQCs")
     ADMIN_ID: int = 5968288964
-    
-    # API Externes
-    API_KEY_ODDS: str
-    GROQ_API_KEY: str
-    
-    # Base de données
-    SUPABASE_URL: str
-    SUPABASE_KEY: str
+    API_KEY_ODDS: str = "55a670c7b44c3dcc3c9750e9f5c51da1"
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    SUPABASE_URL: str = "https://wrzikajiigowxnwcvxzu.supabase.co"
+    SUPABASE_KEY: str = "sb_publishable_7R5FoErDURQtXRVQL17cEg_ddi1X0UR"
 
     class Config:
         env_file = ".env"
-        env_file_encoding = "utf-8"
 
-# Instanciation unique pour toute l'application
 settings = Settings()
 
-# Configuration globale des logs professionnels
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
+
+CACHE_PORTFOLIO = {}
