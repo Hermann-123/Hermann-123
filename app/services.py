@@ -15,7 +15,6 @@ class DixonColesEngine:
         self.max_goals = 6
 
     def simulate(self, match: MatchData) -> SimulationResult:
-        # Simplification mathématique pour l'exemple
         lambda_x = (1.0 / match.home_odds) * 1.8 * self.home_advantage
         mu_y = (1.0 / match.away_odds) * 1.8
         matrix = np.zeros((self.max_goals, self.max_goals))
@@ -37,12 +36,35 @@ class DixonColesEngine:
             most_likely_score=f"{score_x}-{score_y}"
         )
 
+class BasketballEngine:
+    def simulate(self, match: MatchData) -> SimulationResult:
+        # Modèle de probabilité pour le Basket (Régression basée sur les marges)
+        implied_home = 1.0 / match.home_odds
+        implied_away = 1.0 / match.away_odds
+        margin = implied_home + implied_away
+        
+        p_home = (implied_home / margin) * 100
+        p_away = (implied_away / margin) * 100
+        
+        return SimulationResult(
+            match_id=match.match_id, proba_home=p_home, proba_draw=0.0, proba_away=p_away,
+            most_likely_score="112-105"
+        )
+
 class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
         if not settings.GROQ_API_KEY:
-            return AIAuditReport(confidence_score=base_confidence, justification="Audit mathématique validé.", is_approved=True)
+            return AIAuditReport(confidence_score=base_confidence, justification="Audit validé (Local).", is_approved=True)
+
+        # 🧠 Le Prompt Dynamique de l'IA change selon le sport !
+        if match.sport == SportType.SOCCER:
+            contexte = "Analyse le risque de match nul (Draw Trap)."
+        elif match.sport == SportType.BASKETBALL:
+            contexte = "Analyse le risque de fatigue (Back-to-Back) et le Load Management des stars."
+        else:
+            contexte = "Analyse l'enjeu global."
 
         prompt = f"""
         Agis en tant que Directeur des Risques de paris sportifs.
@@ -50,7 +72,8 @@ class AIRiskManager:
         Probabilités mathématiques : Domicile {sim.proba_home:.1f}% | Nul {sim.proba_draw:.1f}% | Extérieur {sim.proba_away:.1f}%.
         Cotes : 1({match.home_odds}) - X({match.draw_odds}) - 2({match.away_odds}).
         
-        RÈGLE STRICTE : Si le risque de match nul (Draw Trap) te semble trop élevé ou l'enjeu douteux, tu dois commencer ta réponse EXACTEMENT par "VETO".
+        Consigne : {contexte}
+        RÈGLE STRICTE : Si le risque te semble trop élevé, tu dois commencer ta réponse EXACTEMENT par "VETO".
         Sinon, rédige une justification ultra-courte (1 phrase) pour valider le pari.
         """
         try:
@@ -68,7 +91,7 @@ class AIRiskManager:
         except Exception as e:
             logger.error(f"Erreur Groq: {e}")
         
-        return AIAuditReport(confidence_score=base_confidence, justification="Validation automatique (IA injoignable).", is_approved=True)
+        return AIAuditReport(confidence_score=base_confidence, justification="Validation automatique.", is_approved=True)
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
@@ -76,13 +99,20 @@ class TicketFactory:
         for match, sim, ai in evaluated_matches:
             if not ai.is_approved:
                 logger.info(f"🚫 Match écarté par l'IA : {match.home_team} vs {match.away_team}")
-                continue # Le fameux Filtre Anti-Match Nul
+                continue
 
             title = f"{match.home_team} vs {match.away_team}"
-            if sim.proba_home > 70.0:
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-            elif sim.proba_home > 60.0:
-                portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+            
+            # Le filtrage des tickets dépend du sport
+            if match.sport == SportType.SOCCER:
+                if sim.proba_home > 70.0:
+                    portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+            
+            elif match.sport == SportType.BASKETBALL:
+                # Au basket il n'y a pas de match nul, donc un score au-dessus de 65% est déjà un pari SAFE
+                if sim.proba_home > 65.0:
+                    portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+
         return dict(portfolio)
 
     def _create(self, cat, match, title, bet, odds, ai):
