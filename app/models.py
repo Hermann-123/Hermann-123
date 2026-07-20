@@ -1,19 +1,18 @@
-from pydantic import BaseModel, Field
-from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
 
-class SportType(str, Enum):
+class SportType(Enum):
     SOCCER = "soccer"
     BASKETBALL = "basketball"
-    TENNIS = "tennis"
+    TENNIS = "tennis" # 🎾 NOUVEAU SPORT AJOUTÉ
 
-class TicketCategory(str, Enum):
-    ULTRA_SAFE = "ULTRA_SAFE"
-    SAFE = "SAFE"
+class TicketCategory(Enum):
+    ULTRA_SAFE = "Ultra Safe"
+    SAFE = "Safe"
     VIP = "VIP"
-    VALUE_BET = "VALUE_BET"
-    NUL = "MATCH_NUL"
+    VALUE = "Value"
 
 class MatchData(BaseModel):
     match_id: str
@@ -31,12 +30,12 @@ class SimulationResult(BaseModel):
     proba_home: float
     proba_draw: float
     proba_away: float
-    most_likely_score: str = ""
+    most_likely_score: str
 
 class AIAuditReport(BaseModel):
     confidence_score: float
     justification: str
-    is_approved: bool = True  # Le droit de veto de l'IA
+    is_approved: bool
 
 class GeneratedTicket(BaseModel):
     category: TicketCategory
