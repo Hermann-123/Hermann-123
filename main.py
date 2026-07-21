@@ -25,7 +25,8 @@ async def fetch_live_matches(sport_key: str, sport_type: SportType) -> list:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=15.0)
             if response.status_code == 200:
-                for m in response.json()[:8]:
+                # ⚠️ LE BRIDAGE A ÉTÉ ENLEVÉ ICI : Le bot scanne TOUS les matchs disponibles
+                for m in response.json():
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
                         cotes = {c['name']: c['price'] for c in m['bookmakers'][0]['markets'][0]['outcomes']}
                         home, away = m['home_team'], m['away_team']
@@ -65,14 +66,15 @@ async def run_platform_pipeline():
                     await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=msg)
                     await asyncio.sleep(1)
                 except Exception as e:
-                    logger.error(f"Erreur envoi Telegram: {e}")
+                    pass
 
     logger.info("✅ Scan Multi-Sports et Archivage terminés !")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_platform_pipeline, 'interval', hours=4)
+    # ⚠️ CHRONO RÉTABLI : Un nouveau scan complet toutes les 30 minutes
+    scheduler.add_job(run_platform_pipeline, 'interval', minutes=30)
     scheduler.start()
     asyncio.create_task(run_platform_pipeline())
     bot_task = asyncio.create_task(dp.start_polling(bot))
