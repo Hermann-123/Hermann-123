@@ -3,7 +3,7 @@ import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: str = "7432405570:AAFbC_KsMBJ2yz2jd1lQ4L5bKOzbia161Nw"
+    TELEGRAM_BOT_TOKEN: str = "7432405570:AAEWxQKUT3zkYIVXRG-5sD2jBj8J8xqJnVo"
     ADMIN_ID: int = 5968288964
     API_KEY_ODDS: str = "55a670c7b44c3dcc3c9750e9f5c51da1"
     
