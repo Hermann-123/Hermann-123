@@ -44,22 +44,25 @@ class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
-        # 🛡️ RÈGLE DE SÉCURITÉ ABSOLUE : Si le pourcentage est inférieur à 60%, rejet immédiat !
         if base_confidence < 60.0:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO : Confiance insuffisante (< 60%). Risque trop élevé.", is_approved=False)
 
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Audit validé par le modèle quantitatif.", is_approved=True)
 
+        # 🧠 LE NOUVEAU CERVEAU DE L'IA : On lui donne un rôle strict d'analyste sportif
         prompt = f"""
-        Agis en tant que Directeur des Risques strict d'un fonds d'investissement en paris sportifs. 
-        Match : {match.home_team} vs {match.away_team} ({match.league}).
-        Probas calculées : Domicile {sim.proba_home:.1f}% | Nul {sim.proba_draw:.1f}% | Extérieur {sim.proba_away:.1f}%.
-        Cotes : 1({match.home_odds}) - X({match.draw_odds}) - 2({match.away_odds}).
+        Tu es un Analyste Sportif de classe mondiale et un Expert Tipster professionnel.
+        Match à analyser : {match.home_team} vs {match.away_team} ({match.league}).
+        L'algorithme quantitatif recommande de parier sur : VICTOIRE DE {match.home_team} (Cote : {match.home_odds}).
         
-        RÈGLE STRICTE : Si le match comporte le moindre risque de contre-performance ou si la confiance n'est pas exceptionnelle, commence ta réponse par le mot exact "VETO". 
-        Si c'est une opportunité en or à haut pourcentage, valide en une phrase courte et professionnelle.
+        CONSIGNES STRICTES :
+        1. NE RÉPÈTE PAS les probabilités ou les cotes. C'est inutile.
+        2. Fais appel à tes connaissances footballistiques (ou basket) sur ces équipes : contexte, supériorité historique, avantage du terrain, style de jeu.
+        3. Si tu penses que ce match est un piège (équipe imprévisible, match nul très probable), commence impérativement ta réponse par "VETO".
+        4. Si tu valides, rédige 2 à 3 phrases d'analyse pure et percutante pour m'expliquer POURQUOI {match.home_team} va gagner sur le terrain (aspect sportif).
         """
+        
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -69,6 +72,9 @@ class AIRiskManager:
                 )
                 if response.status_code == 200:
                     ans = response.json()['choices'][0]['message']['content'].strip()
+                    # On nettoie les guillemets que l'IA met parfois au début
+                    if ans.startswith('"') and ans.endswith('"'): ans = ans[1:-1]
+                    
                     is_approved = not ans.upper().startswith("VETO")
                     return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=is_approved)
         except:
@@ -79,13 +85,11 @@ class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
         portfolio = defaultdict(list)
         for match, sim, ai in evaluated_matches:
-            # 🛑 SI L'IA OU LE FILTRE A MIS UN VETO, ON JETTE LE MATCH PUREMENT ET SIMPLEMENT
             if not ai.is_approved: 
                 continue
                 
             title = f"{match.home_team} vs {match.away_team}"
             
-            # SÉLECTION STRICTE PAR NIVEAU DE CONFIANCE ÉLEVÉ
             if match.sport == SportType.SOCCER:
                 if sim.proba_home >= 70.0:
                     portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
