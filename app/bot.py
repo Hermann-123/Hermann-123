@@ -11,7 +11,6 @@ bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-# Création du statut d'attente pour que le bot vous écoute taper votre capital
 class BankrollState(StatesGroup):
     waiting_for_amount = State()
 
@@ -34,7 +33,6 @@ def football_menu():
         resize_keyboard=True
     )
 
-# ALGORITHME : Formule de Kelly Sécurisée
 def calculate_kelly(bankroll: float, odds: float, confidence: float) -> float:
     if bankroll <= 0: return 0.0
     p = confidence / 100.0
@@ -42,9 +40,7 @@ def calculate_kelly(bankroll: float, odds: float, confidence: float) -> float:
     b = odds - 1.0
     if b <= 0: return 0.0
     f = (b * p - q) / b
-    if f <= 0: return 0.0 # Pari trop risqué, on annule
-    
-    # Sécurité supplémentaire : On ne mise jamais plus de 5% du capital d'un coup
+    if f <= 0: return 0.0 
     f_secure = min(f, 0.05)
     return round(bankroll * f_secure, 2)
 
@@ -52,17 +48,15 @@ def format_ticket(t, bankroll: float) -> str:
     res = f"🏟 **{t.match_title}**\n🎯 Pari: `{t.bet_type}` | Cote: `{t.odds}`\n🤖 IA ({t.ai_confidence}%): {t.ai_justification}\n"
     if bankroll > 0:
         mise = calculate_kelly(bankroll, t.odds, t.ai_confidence)
-        if mise > 0:
-            res += f"💰 **Mise recommandée:** `{mise}€` *(Kelly)*\n"
-        else:
-            res += f"⚠️ **Mise:** `0€` *(Risque mathématique trop élevé)*\n"
+        if mise > 0: res += f"💰 **Mise recommandée:** `{mise}€` *(Kelly)*\n"
+        else: res += f"⚠️ **Mise:** `0€` *(Risque élevé)*\n"
     res += "\n"
     return res
 
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     if message.from_user.id != settings.ADMIN_ID: return
-    await message.answer("🏛 **WallStreet OS v10.0**\n\nLe module de Gestion de Bankroll est activé.", reply_markup=main_menu(), parse_mode="Markdown")
+    await message.answer("🏛 **WallStreet OS v11.1 - Unlocked**\n\nLe radar est débridé et tous les boutons sont opérationnels.", reply_markup=main_menu(), parse_mode="Markdown")
 
 @router.message(F.text == "🔙 Retour Principal")
 async def back_main(message: Message):
@@ -72,54 +66,87 @@ async def back_main(message: Message):
 async def open_football(message: Message):
     await message.answer("Catégories Football :", reply_markup=football_menu())
 
-# --- GESTION DE LA BANKROLL ---
 @router.message(F.text == "💼 Ma Bankroll")
 async def bankroll_menu(message: Message, state: FSMContext):
     bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
-    await message.answer(
-        f"💼 **GESTION DE BANKROLL**\n━━━━━━━━━━━━━━━━━━\n\n"
-        f"Votre capital actuel est de : **{bk} €**\n\n"
-        f"👉 *Envoyez-moi simplement un montant (ex: 500) par message pour définir votre nouveau capital.*",
-        parse_mode="Markdown"
-    )
+    await message.answer(f"💼 **GESTION DE BANKROLL**\nCapital actuel: **{bk} €**\n👉 *Envoyez un montant :*", parse_mode="Markdown")
     await state.set_state(BankrollState.waiting_for_amount)
 
 @router.message(BankrollState.waiting_for_amount)
 async def update_bankroll(message: Message, state: FSMContext):
     try:
-        # On remplace la virgule par un point au cas où
         amount = float(message.text.replace(',', '.'))
         USER_BANKROLLS[message.from_user.id] = amount
         await state.clear()
-        await message.answer(f"✅ **Capital mis à jour à {amount} € !**\nMes algorithmes calculeront désormais les mises idéales sur cette base.", parse_mode="Markdown")
+        await message.answer(f"✅ **Capital mis à jour à {amount} € !**", parse_mode="Markdown")
     except ValueError:
-        await message.answer("❌ Erreur. Veuillez envoyer uniquement un nombre (ex: 150 ou 200.50).")
+        await message.answer("❌ Erreur. Chiffre uniquement.")
 
-# --- AFFICHAGE DES TICKETS ---
+# ⚠️ NOUVEAU : CONNEXION DU BOUTON TOP OPPORTUNITÉS
+@router.message(F.text == "📊 Top Opportunités")
+async def get_top_opps(message: Message):
+    bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
+    
+    foot_tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.ULTRA_SAFE, []) if t.sport == SportType.SOCCER]
+    basket_tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.SAFE, []) if t.sport == SportType.BASKETBALL]
+    tennis_tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.SAFE, []) if t.sport == SportType.TENNIS]
+    
+    top_tickets = []
+    if foot_tickets: top_tickets.append(foot_tickets[0]) # Prend le meilleur du Foot
+    if basket_tickets: top_tickets.append(basket_tickets[0]) # Prend le meilleur du Basket
+    if tennis_tickets: top_tickets.append(tennis_tickets[0]) # Prend le meilleur du Tennis
+    
+    if not top_tickets:
+        return await message.answer("📭 Le radar n'a pas encore trouvé de très grandes opportunités pour le moment. Laissez-le scanner !")
+        
+    res = f"🌟 **TOP OPPORTUNITÉS DU MOMENT**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for t in top_tickets:
+        res += format_ticket(t, bk)
+        
+    await message.answer(res, parse_mode="Markdown")
+
 @router.message(F.text == "🛡️ Ultra Safe (Foot)")
 async def get_ultra_safe(message: Message):
     tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.ULTRA_SAFE, []) if t.sport == SportType.SOCCER]
-    if not tickets: return await message.answer("📭 Aucun ticket Foot Ultra Safe aujourd'hui.")
+    if not tickets: return await message.answer("📭 Aucun ticket Foot Ultra Safe.")
     bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
-    res = f"🛡️ **FOOTBALL : ULTRA SAFE** (Bankroll: {bk}€)\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    res = f"🛡️ **FOOTBALL : ULTRA SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
     for t in tickets[:3]: res += format_ticket(t, bk)
+    await message.answer(res, parse_mode="Markdown")
+
+@router.message(F.text == "💎 VIP (Foot)")
+async def get_vip(message: Message):
+    tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.VIP, []) if t.sport == SportType.SOCCER]
+    if not tickets: return await message.answer("📭 Aucun ticket Foot VIP aujourd'hui.")
+    bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
+    res = f"💎 **FOOTBALL : VIP**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for t in tickets[:5]: res += format_ticket(t, bk)
+    await message.answer(res, parse_mode="Markdown")
+
+@router.message(F.text == "🔥 Value Bets")
+async def get_value(message: Message):
+    tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.VALUE, []) if t.sport == SportType.SOCCER]
+    if not tickets: return await message.answer("📭 Aucun ticket Value Bet aujourd'hui.")
+    bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
+    res = f"🔥 **FOOTBALL : VALUE BETS**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for t in tickets[:5]: res += format_ticket(t, bk)
     await message.answer(res, parse_mode="Markdown")
 
 @router.message(F.text == "🏀 Basket")
 async def get_basket_safe(message: Message):
     tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.SAFE, []) if t.sport == SportType.BASKETBALL]
-    if not tickets: return await message.answer("📭 Aucun ticket Basket aujourd'hui.")
+    if not tickets: return await message.answer("📭 Aucun ticket Basket.")
     bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
-    res = f"🏀 **BASKETBALL : SAFE** (Bankroll: {bk}€)\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    res = f"🏀 **BASKETBALL : SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
     for t in tickets[:3]: res += format_ticket(t, bk)
     await message.answer(res, parse_mode="Markdown")
 
 @router.message(F.text == "🎾 Tennis")
 async def get_tennis_safe(message: Message):
     tickets = [t for t in CACHE_PORTFOLIO.get(TicketCategory.SAFE, []) if t.sport == SportType.TENNIS]
-    if not tickets: return await message.answer("📭 Aucun ticket Tennis aujourd'hui.")
+    if not tickets: return await message.answer("📭 Aucun ticket Tennis.")
     bk = USER_BANKROLLS.get(message.from_user.id, 0.0)
-    res = f"🎾 **TENNIS : SAFE** (Bankroll: {bk}€)\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    res = f"🎾 **TENNIS : SAFE**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
     for t in tickets[:3]: res += format_ticket(t, bk)
     await message.answer(res, parse_mode="Markdown")
 
