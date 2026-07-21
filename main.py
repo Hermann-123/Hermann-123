@@ -26,11 +26,11 @@ from aiogram.filters import CommandStart
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("WallStreet_OS")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAENOX3pa6pIgxoq8yQAlEq2WXEznEHjQCs")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAE7n5uHHju2--gpsFKOCc45UyvltdW8oTU")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "5968288964"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 API_KEY_FOOTBALL = os.getenv("API_KEY_FOOTBALL", "99f9731b68429ed4aaf0383cd7ca8cd4")
-ARCHIVE_CHANNEL_ID = os.getenv("ARCHIVE_CHANNEL_ID", "-100VOTRE_ID_ICI")
+ARCHIVE_CHANNEL_ID = os.getenv("ARCHIVE_CHANNEL_ID", "-1003982738017")
 
 CACHE_PORTFOLIO = {}
 SENT_ALERTS = set()
