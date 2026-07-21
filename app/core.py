@@ -24,6 +24,7 @@ logger = logging.getLogger("WallStreet_OS")
 CACHE_PORTFOLIO = {}
 USER_BANKROLLS = {}
 
-# 🧠 Mémoires du nouveau système
+# 🧠 Mémoires du système de Signaux & Résultats
 SENT_ALERTS = set()
-ARCHIVED_TICKETS = set()
+# Ce dictionnaire stockera les tickets en attente de résultat { "match_id": GeneratedTicket }
+PENDING_TICKETS = {} 
