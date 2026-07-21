@@ -42,7 +42,6 @@ class BasketballEngine:
 
 class TennisEngine:
     def simulate(self, match: MatchData) -> SimulationResult:
-        # Modèle probabiliste pour le Tennis (0% de chance de nul)
         margin = (1.0 / match.home_odds) + (1.0 / match.away_odds)
         p_home = ((1.0 / match.home_odds) / margin) * 100
         p_away = ((1.0 / match.away_odds) / margin) * 100
@@ -54,14 +53,10 @@ class AIRiskManager:
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Audit validé (Local).", is_approved=True)
 
-        if match.sport == SportType.SOCCER:
-            contexte = "Analyse le risque de match nul (Draw Trap)."
-        elif match.sport == SportType.BASKETBALL:
-            contexte = "Analyse le risque de fatigue (Back-to-Back)."
-        elif match.sport == SportType.TENNIS:
-            contexte = "Analyse la spécialité du joueur selon la surface et le risque d'abandon."
-        else:
-            contexte = "Analyse globale."
+        if match.sport == SportType.SOCCER: contexte = "Analyse le risque de match nul (Draw Trap)."
+        elif match.sport == SportType.BASKETBALL: contexte = "Analyse le risque de fatigue."
+        elif match.sport == SportType.TENNIS: contexte = "Analyse la surface et l'état de forme."
+        else: contexte = "Analyse globale."
 
         prompt = f"""
         Agis en tant que Directeur des Risques. Sport: {match.sport.value.upper()} | Match: {match.home_team} vs {match.away_team}.
@@ -91,11 +86,18 @@ class TicketFactory:
             if not ai.is_approved: continue
             title = f"{match.home_team} vs {match.away_team}"
             
-            if match.sport == SportType.SOCCER and sim.proba_home > 70.0:
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-            elif match.sport == SportType.BASKETBALL and sim.proba_home > 65.0:
+            # ⚠️ ACTIVATION DES CATÉGORIES VIP ET VALUE
+            if match.sport == SportType.SOCCER:
+                if sim.proba_home > 65.0:
+                    portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+                elif sim.proba_home > 55.0:
+                    portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+                elif match.home_odds > 1.8 and sim.proba_home > 40.0:
+                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Coup de Poker {match.home_team}", match.home_odds, ai))
+            
+            elif match.sport == SportType.BASKETBALL and sim.proba_home > 55.0:
                 portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-            elif match.sport == SportType.TENNIS and sim.proba_home > 65.0:
+            elif match.sport == SportType.TENNIS and sim.proba_home > 55.0:
                 portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
         return dict(portfolio)
 
