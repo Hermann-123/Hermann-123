@@ -1,18 +1,17 @@
 from enum import Enum
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 class SportType(Enum):
     SOCCER = "soccer"
     BASKETBALL = "basketball"
-    TENNIS = "tennis"
 
 class TicketCategory(Enum):
-    ULTRA_SAFE = "Ultra Safe"
-    SAFE = "Safe"
-    VIP = "VIP"
-    VALUE = "Value"
+    ULTRA_SAFE = "Ultra Safe (Sécurité Max)"
+    VIP = "VIP (Victoires & DNB)"
+    VALUE = "Value Bets (Buts, Scores & Handicaps)"
+    MARKETS = "Marchés Spéciaux (Corners & Mi-temps)"
 
 class MatchData(BaseModel):
     match_id: str
@@ -21,9 +20,9 @@ class MatchData(BaseModel):
     match_date: datetime
     home_team: str
     away_team: str
-    home_odds: float
-    draw_odds: Optional[float] = None
-    away_odds: float
+    home_odds: float = 1.90
+    draw_odds: float = 3.40
+    away_odds: float = 3.80
 
 class SimulationResult(BaseModel):
     match_id: str
@@ -31,6 +30,11 @@ class SimulationResult(BaseModel):
     proba_draw: float
     proba_away: float
     most_likely_score: str
+    proba_btts: float
+    proba_over_1_5: float
+    proba_over_2_5: float
+    proba_over_3_5: float
+    estimated_corners: float
 
 class AIAuditReport(BaseModel):
     confidence_score: float
@@ -46,7 +50,3 @@ class GeneratedTicket(BaseModel):
     odds: float
     ai_confidence: float
     ai_justification: str
-    # 🧠 NOUVEAU : Statut et informations du message Telegram
-    status: str = "PENDING"  # PENDING, WON, LOST
-    telegram_msg_id: Optional[int] = None
-    recommended_stake: float = 0.0
