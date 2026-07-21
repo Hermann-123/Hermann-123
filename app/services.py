@@ -43,14 +43,22 @@ class BasketballEngine:
 class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
+        
+        # 🛡️ RÈGLE DE SÉCURITÉ ABSOLUE : Si le pourcentage est inférieur à 60%, rejet immédiat !
+        if base_confidence < 60.0:
+            return AIAuditReport(confidence_score=base_confidence, justification="VETO : Confiance insuffisante (< 60%). Risque trop élevé.", is_approved=False)
+
         if not settings.GROQ_API_KEY:
-            return AIAuditReport(confidence_score=base_confidence, justification="Audit validé (Local).", is_approved=True)
+            return AIAuditReport(confidence_score=base_confidence, justification="Audit validé par le modèle quantitatif.", is_approved=True)
 
         prompt = f"""
-        Agis en tant que Directeur des Risques. Sport: {match.sport.value.upper()} | Match: {match.home_team} vs {match.away_team}.
-        Probas : Domicile {sim.proba_home:.1f}% | Nul {sim.proba_draw:.1f}% | Extérieur {sim.proba_away:.1f}%.
+        Agis en tant que Directeur des Risques strict d'un fonds d'investissement en paris sportifs. 
+        Match : {match.home_team} vs {match.away_team} ({match.league}).
+        Probas calculées : Domicile {sim.proba_home:.1f}% | Nul {sim.proba_draw:.1f}% | Extérieur {sim.proba_away:.1f}%.
         Cotes : 1({match.home_odds}) - X({match.draw_odds}) - 2({match.away_odds}).
-        RÈGLE : Rédige 1 courte phrase d'analyse professionnelle et valide le pronostic.
+        
+        RÈGLE STRICTE : Si le match comporte le moindre risque de contre-performance ou si la confiance n'est pas exceptionnelle, commence ta réponse par le mot exact "VETO". 
+        Si c'est une opportunité en or à haut pourcentage, valide en une phrase courte et professionnelle.
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -61,23 +69,31 @@ class AIRiskManager:
                 )
                 if response.status_code == 200:
                     ans = response.json()['choices'][0]['message']['content'].strip()
-                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=True)
+                    is_approved = not ans.upper().startswith("VETO")
+                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=is_approved)
         except:
             pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Analyse validée par l'algorithme quantitatif.", is_approved=True)
+        return AIAuditReport(confidence_score=base_confidence, justification="Validation quantifiée haut niveau.", is_approved=True)
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
         portfolio = defaultdict(list)
         for match, sim, ai in evaluated_matches:
+            # 🛑 SI L'IA OU LE FILTRE A MIS UN VETO, ON JETTE LE MATCH PUREMENT ET SIMPLEMENT
+            if not ai.is_approved: 
+                continue
+                
             title = f"{match.home_team} vs {match.away_team}"
             
-            # SÉCURITÉ : Chaque match qualifié alimente TOUTES les catégories pour ne jamais avoir de boutons vides
+            # SÉLECTION STRICTE PAR NIVEAU DE CONFIANCE ÉLEVÉ
             if match.sport == SportType.SOCCER:
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Value Bet {match.home_team}", match.home_odds, ai))
-            elif match.sport == SportType.BASKETBALL:
+                if sim.proba_home >= 70.0:
+                    portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+                elif sim.proba_home >= 62.0:
+                    portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+                elif match.home_odds >= 1.70 and sim.proba_home >= 58.0:
+                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Value Bet {match.home_team}", match.home_odds, ai))
+            elif match.sport == SportType.BASKETBALL and sim.proba_home >= 65.0:
                 portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
                 
         return dict(portfolio)
