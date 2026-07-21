@@ -6,7 +6,7 @@ from typing import Optional
 class SportType(Enum):
     SOCCER = "soccer"
     BASKETBALL = "basketball"
-    TENNIS = "tennis" # 🎾 NOUVEAU SPORT AJOUTÉ
+    TENNIS = "tennis"
 
 class TicketCategory(Enum):
     ULTRA_SAFE = "Ultra Safe"
@@ -46,3 +46,7 @@ class GeneratedTicket(BaseModel):
     odds: float
     ai_confidence: float
     ai_justification: str
+    # 🧠 NOUVEAU : Statut et informations du message Telegram
+    status: str = "PENDING"  # PENDING, WON, LOST
+    telegram_msg_id: Optional[int] = None
+    recommended_stake: float = 0.0
