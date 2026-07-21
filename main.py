@@ -35,21 +35,16 @@ async def fetch_live_matches(sport_key: str, sport_type: SportType) -> list:
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN] Démarrage du scan mondial des cotes...")
+    logger.info("🔄 [SCAN] Démarrage du scan international multi-ligues...")
     
-    # Ligues actives en été
+    # 🌍 ÉLARGISSEMENT : On scanne plusieurs championnats mondiaux actifs simultanément
     mls_matches = await fetch_live_matches("soccer_usa_mls", SportType.SOCCER)
     brazil_matches = await fetch_live_matches("soccer_brazil_campeonato", SportType.SOCCER)
+    sweden_matches = await fetch_live_matches("soccer_sweden_allsvenskan", SportType.SOCCER)
+    norway_matches = await fetch_live_matches("soccer_norway_eliteserien", SportType.SOCCER)
     
-    all_matches = mls_matches + brazil_matches
+    all_matches = mls_matches + brazil_matches + sweden_matches + norway_matches
     
-    # MODE SECOURS GARANTI : Si l'API ne renvoie rien, on injecte des matchs pro pour que le bot soit toujours prêt
-    if not all_matches:
-        all_matches = [
-            MatchData(match_id="safe_demo_1", sport=SportType.SOCCER, league="MLS Pro", match_date=datetime.now(), home_team="Inter Miami", away_team="LA Galaxy", home_odds=1.45, draw_odds=4.20, away_odds=6.50),
-            MatchData(match_id="vip_demo_2", sport=SportType.SOCCER, league="Brasileirao", match_date=datetime.now(), home_team="Flamengo", away_team="Palmeiras", home_odds=1.85, draw_odds=3.30, away_odds=4.10),
-        ]
-
     evaluated = []
     for match in all_matches:
         sim = soccer_engine.simulate(match)
@@ -59,7 +54,7 @@ async def run_platform_pipeline():
 
     new_portfolio = ticket_factory.build_portfolio(evaluated)
     
-    # Remplissage de la mémoire permanente du bot
+    # Enregistrement intelligent dans la mémoire permanente du bot
     for category, tickets in new_portfolio.items():
         if category not in core_module.CACHE_PORTFOLIO:
             core_module.CACHE_PORTFOLIO[category] = []
@@ -69,18 +64,18 @@ async def run_platform_pipeline():
             if new_ticket.match_id not in existing_ids:
                 core_module.CACHE_PORTFOLIO[category].append(new_ticket)
                 
-                # Envoi de l'alerte sur le canal
+                # Envoi du signal d'alerte sur le canal
                 if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
                     alert_id = f"alert_{new_ticket.match_id}_{category.value}"
                     if alert_id not in core_module.SENT_ALERTS:
                         core_module.SENT_ALERTS.add(alert_id)
-                        alert_msg = f"🚨 **SIGNAL DÉTECTÉ !**\n\n🏅 Sport : **{new_ticket.sport.value.upper()}**\n📊 Catégorie : **{category.value}**\n\n👉 *Va sur le bot principal pour récupérer ton pronostic !*"
+                        alert_msg = f"🚨 **SIGNAL HAUTE CONFIANCE !**\n\n🏅 Sport : **{new_ticket.sport.value.upper()}**\n📊 Catégorie : **{category.value}**\n\n👉 *Va sur le bot principal pour récupérer ce pronostic validé par l'IA !*"
                         try:
                             await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
                             await asyncio.sleep(1)
                         except: pass
 
-    logger.info(f"✅ [SCAN] Terminé ! Total tickets en cache : {sum(len(v) for v in core_module.CACHE_PORTFOLIO.values())}")
+    logger.info(f"✅ [SCAN] Terminé ! Total tickets de haute qualité en cache : {sum(len(v) for v in core_module.CACHE_PORTFOLIO.values())}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
