@@ -1,17 +1,19 @@
 from enum import Enum
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
 
 class SportType(Enum):
     SOCCER = "soccer"
     BASKETBALL = "basketball"
+    TENNIS = "tennis"
 
 class TicketCategory(Enum):
-    ULTRA_SAFE = "Ultra Safe (Sécurité Max)"
-    VIP = "VIP (Victoires & DNB)"
-    VALUE = "Value Bets (Buts, Scores & Handicaps)"
-    MARKETS = "Marchés Spéciaux (Corners & Mi-temps)"
+    ULTRA_SAFE = "🛡️ Ultra Safe (Foot)"
+    VIP = "💎 VIP (Foot)"
+    VALUE = "🔥 Value Bets"
+    BASKET = "🏀 Basket"
+    TENNIS = "🎾 Tennis"
+    TOP_OPP = "📊 Top Opportunités"
 
 class MatchData(BaseModel):
     match_id: str
@@ -33,8 +35,6 @@ class SimulationResult(BaseModel):
     proba_btts: float
     proba_over_1_5: float
     proba_over_2_5: float
-    proba_over_3_5: float
-    estimated_corners: float
 
 class AIAuditReport(BaseModel):
     confidence_score: float
@@ -44,7 +44,6 @@ class AIAuditReport(BaseModel):
 class GeneratedTicket(BaseModel):
     category: TicketCategory
     match_id: str
-    sport: SportType
     match_title: str
     bet_type: str
     odds: float
