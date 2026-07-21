@@ -1,30 +1,20 @@
-import logging
 import os
-from pydantic_settings import BaseSettings
+import logging
 
-class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: str = "7432405570:AAHbOpw2cV-8XrHSKra9wD0S4W12BMh4etM"
-    ADMIN_ID: int = 5968288964
-    API_KEY_ODDS: str = "55a670c7b44c3dcc3c9750e9f5c51da1"
-    
-    # ⚠️ REMETTEZ LE VRAI ID DE VOTRE CANAL ICI :
-    ARCHIVE_CHANNEL_ID: str = "-1003982738017" 
-    
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("WallStreet_OS")
+
+class Settings:
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "7432405570:AAENOX3pa6pIgxoq8yQAlEq2WXEznEHjQCs")
+    ADMIN_ID: int = int(os.getenv("ADMIN_ID", "5968288964"))
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    
+    # 🔑 TA NOUVELLE CLÉ API-FOOTBALL OFFICIELLE
+    API_KEY_FOOTBALL: str = os.getenv("API_KEY_FOOTBALL", "99f9731b68429ed4aaf0383cd7ca8cd4")
+    
+    ARCHIVE_CHANNEL_ID: str = os.getenv("ARCHIVE_CHANNEL_ID", "-1003982738017")
 
 settings = Settings()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("WallStreet_OS")
-
 CACHE_PORTFOLIO = {}
-USER_BANKROLLS = {}
-
-# 🧠 Mémoires du système de Signaux & Résultats
 SENT_ALERTS = set()
-# Ce dictionnaire stockera les tickets en attente de résultat { "match_id": GeneratedTicket }
-PENDING_TICKETS = {} 
