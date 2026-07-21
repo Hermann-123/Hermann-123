@@ -40,30 +40,17 @@ class BasketballEngine:
         p_away = ((1.0 / match.away_odds) / margin) * 100
         return SimulationResult(match_id=match.match_id, proba_home=p_home, proba_draw=0.0, proba_away=p_away, most_likely_score="112-105")
 
-class TennisEngine:
-    def simulate(self, match: MatchData) -> SimulationResult:
-        margin = (1.0 / match.home_odds) + (1.0 / match.away_odds)
-        p_home = ((1.0 / match.home_odds) / margin) * 100
-        p_away = ((1.0 / match.away_odds) / margin) * 100
-        return SimulationResult(match_id=match.match_id, proba_home=p_home, proba_draw=0.0, proba_away=p_away, most_likely_score="2-0")
-
 class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Audit validé (Local).", is_approved=True)
 
-        if match.sport == SportType.SOCCER: contexte = "Analyse le risque de match nul (Draw Trap)."
-        elif match.sport == SportType.BASKETBALL: contexte = "Analyse le risque de fatigue."
-        elif match.sport == SportType.TENNIS: contexte = "Analyse la surface et l'état de forme."
-        else: contexte = "Analyse globale."
-
         prompt = f"""
         Agis en tant que Directeur des Risques. Sport: {match.sport.value.upper()} | Match: {match.home_team} vs {match.away_team}.
         Probas : Domicile {sim.proba_home:.1f}% | Nul {sim.proba_draw:.1f}% | Extérieur {sim.proba_away:.1f}%.
         Cotes : 1({match.home_odds}) - X({match.draw_odds}) - 2({match.away_odds}).
-        Consigne : {contexte}
-        RÈGLE STRICTE : Si le risque est trop élevé, commence ta réponse EXACTEMENT par "VETO". Sinon, rédige 1 courte phrase de validation.
+        RÈGLE STRICTE : Si le risque est énorme, commence ta réponse par "VETO". Sinon, rédige 1 courte phrase de validation.
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -86,20 +73,19 @@ class TicketFactory:
             if not ai.is_approved: continue
             title = f"{match.home_team} vs {match.away_team}"
             
-            # ⚠️ ACTIVATION DES CATÉGORIES VIP ET VALUE
+            # RÈGLES SOUPLES POUR REMPLIR LES BOUTONS
             if match.sport == SportType.SOCCER:
-                if sim.proba_home > 65.0:
+                if sim.proba_home > 50.0:
                     portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-                elif sim.proba_home > 55.0:
+                if sim.proba_home > 40.0:
                     portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-                elif match.home_odds > 1.8 and sim.proba_home > 40.0:
-                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Coup de Poker {match.home_team}", match.home_odds, ai))
+                if match.home_odds > 1.5:
+                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Value Bet {match.home_team}", match.home_odds, ai))
             
-            elif match.sport == SportType.BASKETBALL and sim.proba_home > 55.0:
+            elif match.sport == SportType.BASKETBALL and sim.proba_home > 45.0:
                 portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
-            elif match.sport == SportType.TENNIS and sim.proba_home > 55.0:
-                portfolio[TicketCategory.SAFE].append(self._create(TicketCategory.SAFE, match, title, f"Victoire {match.home_team}", match.home_odds, ai))
+                
         return dict(portfolio)
 
     def _create(self, cat, match, title, bet, odds, ai):
-        return GeneratedTicket(category=cat, match_id=match.match_id, sport=match.sport, match_title=title, bet_type=bet, odds=round(odds, 2), ai_confidence=ai.confidence_score, ai_justification=ai.justification)
+        return GeneratedTicket(category=cat, match_id=match.match_id, sport=match.sport, match_title=title, bet_type=bet, odds=round(odds, 2), ai_confidence=ai.confidence_score, ai_justification=ai.ai_justification if hasattr(ai, 'ai_justification') else ai.justification)
