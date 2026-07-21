@@ -1,134 +1,97 @@
+import os
 import asyncio
 import httpx
-import numpy as np
-from scipy.stats import poisson
-from typing import List, Tuple
 from datetime import datetime
-from collections import defaultdict
+from fastapi import FastAPI
+import uvicorn
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from contextlib import asynccontextmanager
 
-from app.models import MatchData, SimulationResult, AIAuditReport, GeneratedTicket, TicketCategory, SportType
-from app.core import settings, logger
+from app.core import settings, logger, CACHE_PORTFOLIO, SENT_ALERTS
+from app.models import MatchData, SportType
+from app.services import DixonColesEngine, AIRiskManager, TicketFactory
+from app.bot import bot, dp
 
-class DixonColesEngine:
-    def __init__(self, rho: float = -0.15, home_advantage: float = 1.15):
-        self.rho = rho
-        self.home_advantage = home_advantage
-        self.max_goals = 6
+soccer_engine = DixonColesEngine()
+ai_manager = AIRiskManager()
+ticket_factory = TicketFactory()
 
-    def simulate(self, match: MatchData) -> SimulationResult:
-        lambda_x = (1.0 / match.home_odds) * 1.8 * self.home_advantage
-        mu_y = (1.0 / match.away_odds) * 1.8
-        matrix = np.zeros((self.max_goals, self.max_goals))
-
-        for i in range(self.max_goals):
-            for j in range(self.max_goals):
-                matrix[i, j] = poisson.pmf(i, lambda_x) * poisson.pmf(j, mu_y)
+async def fetch_matches() -> list:
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    url = f"https://v3.football.api-sports.io/fixtures?date={today_str}"
+    headers = {"x-apisports-key": settings.API_KEY_FOOTBALL}
+    matches = []
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=20.0)
+            if response.status_code == 200:
+                for f in response.json().get("response", [])[:20]:
+                    teams = f.get("teams", {})
+                    matches.append(MatchData(
+                        match_id=str(f.get("fixture", {}).get("id")),
+                        sport=SportType.SOCCER,
+                        league=f.get("league", {}).get("name", "League"),
+                        match_date=datetime.now(),
+                        home_team=teams.get("home", {}).get("name", "Home"),
+                        away_team=teams.get("away", {}).get("name", "Away")
+                    ))
+    except Exception as e:
+        logger.error(f"Erreur API-Football : {e}")
         
-        matrix /= np.sum(matrix)
-        p_home = float(np.sum(np.tril(matrix, -1))) * 100
-        p_draw = float(np.sum(np.diag(matrix))) * 100
-        p_away = float(np.sum(np.triu(matrix, 1))) * 100
+    if not matches:
+        matches = [MatchData(match_id="demo_1", sport=SportType.SOCCER, league="Brasileirao", match_date=datetime.now(), home_team="Flamengo", away_team="Palmeiras", home_odds=2.10, draw_odds=3.20, away_odds=3.50)]
+    return matches
 
-        best_idx = np.argmax(matrix)
-        score_x, score_y = np.unravel_index(best_idx, matrix.shape)
+async def run_platform_pipeline():
+    logger.info("🔄 [SCAN API-FOOTBALL] Démarrage du pipeline global...")
+    matches = await fetch_matches()
+    evaluated = []
+    
+    for match in matches:
+        sim = soccer_engine.simulate(match)
+        best_bet = f"Victoire {match.home_team}" if sim.proba_home >= sim.proba_away else f"Victoire {match.away_team}"
+        ai_report = await ai_manager.evaluate_match(match, sim, best_bet)
+        evaluated.append((match, sim, ai_report))
+        await asyncio.sleep(0.5)
 
-        # Calcul des marchés avancés
-        p_btts = float(np.sum(matrix[1:, 1:])) * 100
-        p_o15 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 1])) * 100
-        p_o25 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 2])) * 100
-        p_o35 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 3])) * 100
-        
-        est_corners = round(8.5 + (lambda_x + mu_y) * 1.5, 1)
-
-        return SimulationResult(
-            match_id=match.match_id, proba_home=p_home, proba_draw=p_draw, proba_away=p_away, 
-            most_likely_score=f"{score_x}-{score_y}", proba_btts=p_btts, 
-            proba_over_1_5=p_o15, proba_over_2_5=p_o25, proba_over_3_5=p_o35, estimated_corners=est_corners
-        )
-
-class AIRiskManager:
-    async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
-        base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
-        
-        if base_confidence < 45.0:
-            return AIAuditReport(confidence_score=base_confidence, justification="VETO : Match trop imprévisible.", is_approved=False)
-
-        if not settings.GROQ_API_KEY:
-            return AIAuditReport(confidence_score=base_confidence, justification="Validé par le modèle professionnel.", is_approved=True)
-
-        prompt = f"""
-        Tu es un Tipster et Trader Sportif professionnel.
-        Match : {match.home_team} vs {match.away_team} ({match.league}).
-        Tendances : 1({sim.proba_home:.1f}%) | X({sim.proba_draw:.1f}%) | 2({sim.proba_away:.1f}%). Score probable : {sim.most_likely_score}.
-        
-        CONSIGNES :
-        1. NE DIS AUCUN CHIFFRE OU POURCENTAGE.
-        2. Rédige une analyse experte en 2 phrases expliquant la physionomie tactique et le pari le plus solide à tenter.
-        3. Si c'est un piège, commence par "VETO".
-        """
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}]}, timeout=10.0
-                )
-                if response.status_code == 200:
-                    ans = response.json()['choices'][0]['message']['content'].strip()
-                    if ans.startswith('"') and ans.endswith('"'): ans = ans[1:-1]
-                    is_approved = not ans.upper().startswith("VETO")
-                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=is_approved)
-        except:
-            pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Analyse validée par l'algorithme quantitatif.", is_approved=True)
-
-class TicketFactory:
-    def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
-        portfolio = defaultdict(list)
-        for match, sim, ai in evaluated_matches:
-            if not ai.is_approved: continue
+    new_portfolio = ticket_factory.build_portfolio(evaluated)
+    
+    for category, tickets in new_portfolio.items():
+        if category not in CACHE_PORTFOLIO:
+            CACHE_PORTFOLIO[category] = []
+            
+        for new_ticket in tickets:
+            existing_ids = [t.match_id for t in CACHE_PORTFOLIO[category]]
+            if new_ticket.match_id not in existing_ids:
+                CACHE_PORTFOLIO[category].append(new_ticket)
                 
-            title = f"{match.home_team} vs {match.away_team}"
-            
-            # 1. ULTRA SAFE : Double Chance ou Over 1.5 buts
-            if sim.proba_home >= sim.proba_away:
-                dc_prob = sim.proba_home + sim.proba_draw
-                dc_odds = 1.28
-                dc_name = f"Double Chance : {match.home_team} ou Nul (1X)"
-            else:
-                dc_prob = sim.proba_away + sim.proba_draw
-                dc_odds = 1.32
-                dc_name = f"Double Chance : {match.away_team} ou Nul (X2)"
-            
-            if dc_prob >= 75.0:
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, dc_name, dc_odds, ai))
-            
-            if sim.proba_over_1_5 >= 78.0:
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, "Plus de 1.5 Buts dans le match", 1.35, ai))
+                if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
+                    alert_id = f"alert_{new_ticket.match_id}_{category.name}"
+                    if alert_id not in SENT_ALERTS:
+                        SENT_ALERTS.add(alert_id)
+                        alert_msg = f"🚨 **NOUVEAU SIGNAL DÉTECTÉ !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Va sur le bot principal pour obtenir ton pronostic !*"
+                        try:
+                            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
+                            await asyncio.sleep(1)
+                        except: pass
 
-            # 2. VIP : Draw No Bet (Remboursé si Nul) & Victoires solides
-            best_team = match.home_team if sim.proba_home >= sim.proba_away else match.away_team
-            best_odds = match.home_odds if sim.proba_home >= sim.proba_away else match.away_odds
-            best_proba = max(sim.proba_home, sim.proba_away)
-            
-            if best_proba >= 58.0 and best_odds >= 1.50:
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {best_team}", best_odds, ai))
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Remboursé si Nul (DNB) : {best_team}", round(best_odds * 0.85, 2), ai))
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await bot.delete_webhook(drop_pending_updates=True)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_platform_pipeline, 'interval', minutes=30)
+    scheduler.start()
+    asyncio.create_task(run_platform_pipeline())
+    bot_task = asyncio.create_task(dp.start_polling(bot))
+    yield
+    scheduler.shutdown()
+    bot_task.cancel()
+    await bot.session.close()
 
-            # 3. VALUE BETS : BTTS, Over 2.5, Score Exact, Handicap
-            if sim.proba_btts >= 60.0:
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Les deux équipes marquent (BTTS - Oui)", 1.75, ai))
-            
-            if sim.proba_over_2_5 >= 58.0:
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Plus de 2.5 Buts", 1.85, ai))
+app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
-            portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Score Exact : {sim.most_likely_score}", 7.50, ai))
+@app.get("/")
+async def health(): return {"status": "ONLINE - CLEAN ARCHITECTURE"}
 
-            # 4. MARCHÉS SPÉCIAUX : Corners & Mi-temps
-            portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, f"Total Corners : Plus de 8.5 corners", 1.72, ai))
-            portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, f"Mi-temps avec le plus de buts : 2ème mi-temps", 2.05, ai))
-                
-        return dict(portfolio)
-
-    def _create(self, cat, match, title, bet, odds, ai):
-        return GeneratedTicket(category=cat, match_id=f"{match.match_id}_{bet[:10]}", sport=match.sport, match_title=title, bet_type=bet, odds=round(odds, 2), ai_confidence=ai.confidence_score, ai_justification=ai.ai_justification if hasattr(ai, 'ai_justification') else ai.justification)
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), reload=False)
