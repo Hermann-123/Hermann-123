@@ -25,21 +25,21 @@ async def fetch_api_football_matches() -> list:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=20.0)
             if response.status_code == 200:
-                for f in response.json().get("response", [])[:100]: 
-                    fixture = f.get("fixture", {})
+                all_matches = response.json().get("response", [])
+                upcoming_matches = []
+                
+                # 1. On isole d'abord UNIQUEMENT les matchs qui ne sont pas encore joués
+                for f in all_matches:
+                    match_date_full = str(f.get("fixture", {}).get("date", ""))
+                    status = f.get("fixture", {}).get("status", {}).get("short", "")
                     
-                    # 🔒 SÉCURITÉ : Uniquement les matchs du jour même
-                    match_date_full = str(fixture.get("date", ""))
-                    if not match_date_full.startswith(today_str):
-                        continue
-                        
-                    # 🔒 SÉCURITÉ : Uniquement les matchs non commencés
-                    status = fixture.get("status", {}).get("short", "")
-                    if status not in ["NS", "TBD"]: 
-                        continue
-
+                    if match_date_full.startswith(today_str) and status in ["NS", "TBD"]:
+                        upcoming_matches.append(f)
+                
+                # 2. On prend les 30 prochains matchs à venir (même s'il est 16h ou 20h)
+                for f in upcoming_matches[:30]:
                     matches.append(MatchData(
-                        match_id=str(fixture.get("id")),
+                        match_id=str(f.get("fixture", {}).get("id")),
                         sport=SportType.SOCCER,
                         league=f.get("league", {}).get("name", "League"),
                         match_date=datetime.now(),
@@ -52,7 +52,7 @@ async def fetch_api_football_matches() -> list:
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN PRO] Analyse des probabilités internes et recherche de cotes >= 1.50...")
+    logger.info("🔄 [SCAN DÉBLOQUÉ] Recherche d'opportunités sur les matchs à venir...")
     matches = await fetch_api_football_matches()
     evaluated = []
     
@@ -77,7 +77,7 @@ async def run_platform_pipeline():
                     alert_id = f"alert_{new_ticket.match_id}_{category.name}"
                     if alert_id not in core_module.SENT_ALERTS:
                         core_module.SENT_ALERTS.add(alert_id)
-                        alert_msg = f"🚨 **SIGNAL PRO DÉTECTÉ !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Va dans le bot principal pour sélectionner la catégorie du signal et obtenir ton analyse détaillée !*"
+                        alert_msg = f"🚨 **NOUVEAU SIGNAL RENTABLE !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Va dans le bot principal pour obtenir ton analyse détaillée !*"
                         try:
                             await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
                             await asyncio.sleep(1)
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
 @app.get("/")
-async def health(): return {"status": "ONLINE - STRATEGIE PRO ACTIVE"}
+async def health(): return {"status": "ONLINE - VANNES OUVERTES"}
 
 if __name__ == "__main__":
     import os
