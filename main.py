@@ -25,9 +25,21 @@ async def fetch_api_football_matches() -> list:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=20.0)
             if response.status_code == 200:
-                for f in response.json().get("response", [])[:20]:
+                for f in response.json().get("response", [])[:40]: # Scanne 40 matchs pour trouver les pépites
+                    fixture = f.get("fixture", {})
+                    
+                    # 🚫 FILTRE STRICT 1 : UNIQUEMENT LES MATCHS DU JOUR MÊME
+                    match_date_full = str(fixture.get("date", ""))
+                    if not match_date_full.startswith(today_str):
+                        continue
+                        
+                    # 🚫 FILTRE STRICT 2 : UNIQUEMENT LES MATCHS NON COMMENCÉS
+                    status = fixture.get("status", {}).get("short", "")
+                    if status not in ["NS", "TBD"]: 
+                        continue
+
                     matches.append(MatchData(
-                        match_id=str(f.get("fixture", {}).get("id")),
+                        match_id=str(fixture.get("id")),
                         sport=SportType.SOCCER,
                         league=f.get("league", {}).get("name", "League"),
                         match_date=datetime.now(),
@@ -37,12 +49,10 @@ async def fetch_api_football_matches() -> list:
     except Exception as e:
         logger.error(f"Erreur API : {e}")
         
-    if not matches:
-        matches = [MatchData(match_id="demo_1", sport=SportType.SOCCER, league="Demo", match_date=datetime.now(), home_team="Flamengo", away_team="Palmeiras")]
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN API] Démarrage...")
+    logger.info("🔄 [SCAN] Recherche d'opportunités du jour (>1.50) en cours...")
     matches = await fetch_api_football_matches()
     evaluated = []
     
@@ -86,11 +96,10 @@ async def lifespan(app: FastAPI):
     bot_task.cancel()
     await bot.session.close()
 
-# 🔑 LA LIGNE ESSENTIELLE QUE RENDER CHERCHAit :
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
 @app.get("/")
-async def health(): return {"status": "ONLINE"}
+async def health(): return {"status": "ONLINE - HAUTE RENTABILITE & MATCHS DU JOUR"}
 
 if __name__ == "__main__":
     import os
