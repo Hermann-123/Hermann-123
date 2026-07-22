@@ -1,3 +1,4 @@
+python
 import asyncio
 import httpx
 from datetime import datetime
@@ -105,15 +106,4 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(run_platform_pipeline())
     bot_task = asyncio.create_task(dp.start_polling(bot))
     yield
-    scheduler.shutdown()
-    bot_task.cancel()
-    await bot.session.close()
-
-app = FastAPI(title="WallStreet OS - Pro Markets", lifespan=lifespan)
-
-@app.get("/")
-async def health(): return {"status": "ONLINE - API FOOTBALL CONNECTED"}
-
-if __name__ == "__main__":
-    import os
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), reload=False)
+    sched
