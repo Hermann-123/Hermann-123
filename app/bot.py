@@ -12,29 +12,28 @@ router = Router()
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🛡️ Ultra Safe (Foot)"), KeyboardButton(text="💎 VIP (Foot)")],
-            [KeyboardButton(text="🔥 Value Bets"), KeyboardButton(text="📊 Top Opportunités")],
-            [KeyboardButton(text="🏀 Basket"), KeyboardButton(text="🎾 Tennis")]
+            [KeyboardButton(text=TicketCategory.ULTRA_SAFE.value), KeyboardButton(text=TicketCategory.VIP.value)],
+            [KeyboardButton(text=TicketCategory.VALUE.value), KeyboardButton(text=TicketCategory.MARKETS.value)]
         ],
         resize_keyboard=True
     )
 
 @router.message(CommandStart())
 async def command_start(message: Message):
-    await message.answer("🏛 **WALLSTREET OS** est prêt.\nSélectionnez une catégorie ci-dessous :", reply_markup=main_keyboard())
+    await message.answer("🏛 **WALLSTREET OS - PRO MARKETS**\n\nSélectionnez une catégorie ci-dessous :", reply_markup=main_keyboard())
 
-@router.message(F.text.in_(["🛡️ Ultra Safe (Foot)", "💎 VIP (Foot)", "🔥 Value Bets", "🏀 Basket", "🎾 Tennis", "📊 Top Opportunités"]))
-async def handle_keyboard_buttons(message: Message):
+@router.message(F.text.in_([c.value for c in TicketCategory]))
+async def handle_category(message: Message):
     target_cat = TicketCategory(message.text)
     tickets = CACHE_PORTFOLIO.get(target_cat, [])
 
     if not tickets:  
-        await message.answer(f"📭 Aucun ticket disponible pour le moment dans **{message.text}**. L'IA analyse les prochains matchs.")  
+        await message.answer(f"📭 Aucun ticket disponible pour **{message.text}** pour le moment. L'IA analyse les matchs.")  
         return  
 
     response = f"🏛 **PORTFEUILLE : {message.text}**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"  
     for t in tickets[:3]:  
-        response += f"⚽ **{t.match_title}**\n🎯 Pari : `{t.bet_type}`\n📈 Cote estimée : `{t.odds}`\n🤖 IA ({t.ai_confidence}%) : *{t.ai_justification}*\n\n"  
+        response += f"⚽ **{t.match_title}**\n🎯 Pari : `{t.bet_type}`\n📈 Cote : `{t.odds}`\n🤖 IA ({t.ai_confidence}%) : *{t.ai_justification}*\n\n"  
       
     await message.answer(response, parse_mode="Markdown")
 
