@@ -1,4 +1,3 @@
-python
 import asyncio
 import httpx
 import numpy as np
