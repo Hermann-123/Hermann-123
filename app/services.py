@@ -1,20 +1,27 @@
-import numpy as np
+import asyncio
 import httpx
+import numpy as np
 from scipy.stats import poisson
 from typing import List, Tuple
+from datetime import datetime
 from collections import defaultdict
 
-from app.models import MatchData, SimulationResult, AIAuditReport, GeneratedTicket, TicketCategory
+from app.models import MatchData, SimulationResult, AIAuditReport, GeneratedTicket, TicketCategory, SportType
 from app.core import settings, logger
 
 class DixonColesEngine:
-    def simulate(self, match: MatchData) -> SimulationResult:
-        lambda_x = (1.0 / match.home_odds) * 1.8 * 1.15
-        mu_y = (1.0 / match.away_odds) * 1.8
-        matrix = np.zeros((6, 6))
+    def __init__(self, rho: float = -0.15, home_advantage: float = 1.15):
+        self.rho = rho
+        self.home_advantage = home_advantage
+        self.max_goals = 6
 
-        for i in range(6):
-            for j in range(6):
+    def simulate(self, match: MatchData) -> SimulationResult:
+        lambda_x = (1.0 / match.home_odds) * 1.8 * self.home_advantage
+        mu_y = (1.0 / match.away_odds) * 1.8
+        matrix = np.zeros((self.max_goals, self.max_goals))
+
+        for i in range(self.max_goals):
+            for j in range(self.max_goals):
                 matrix[i, j] = poisson.pmf(i, lambda_x) * poisson.pmf(j, mu_y)
         
         matrix /= np.sum(matrix)
@@ -25,29 +32,32 @@ class DixonColesEngine:
         best_idx = np.argmax(matrix)
         score_x, score_y = np.unravel_index(best_idx, matrix.shape)
 
+        p_btts = float(np.sum(matrix[1:, 1:])) * 100
+        p_o15 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 1])) * 100
+        p_o25 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 2])) * 100
+        p_o35 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 3])) * 100
+        est_corners = round(8.5 + (lambda_x + mu_y) * 1.5, 1)
+
         return SimulationResult(
             match_id=match.match_id, proba_home=p_home, proba_draw=p_draw, proba_away=p_away, 
-            most_likely_score=f"{score_x}-{score_y}", 
-            proba_btts=float(np.sum(matrix[1:, 1:])) * 100, 
-            proba_over_1_5=float(np.sum([matrix[i, j] for i in range(6) for j in range(6) if i + j > 1])) * 100, 
-            proba_over_2_5=float(np.sum([matrix[i, j] for i in range(6) for j in range(6) if i + j > 2])) * 100
+            most_likely_score=f"{score_x}-{score_y}", proba_btts=p_btts, 
+            proba_over_1_5=p_o15, proba_over_2_5=p_o25, proba_over_3_5=p_o35, estimated_corners=est_corners
         )
 
 class AIRiskManager:
-    async def evaluate_match(self, match: MatchData, sim: SimulationResult, bet_type: str) -> AIAuditReport:
+    async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
         if base_confidence < 45.0:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO", is_approved=False)
 
         if not settings.GROQ_API_KEY:
-            return AIAuditReport(confidence_score=base_confidence, justification="Analyse technique validée.", is_approved=True)
+            return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement.", is_approved=True)
 
         prompt = f"""
-        Expert en paris sportifs. Analyse le match {match.home_team} contre {match.away_team}.
-        Le pari mathématique proposé est : {bet_type}.
-        Rédige OBLIGATOIREMENT 2 phrases complètes d'analyse tactique pour justifier ce pari.
-        Si tu penses que c'est risqué, réponds UNIQUEMENT le mot "VETO". Ne donne aucun chiffre.
+        Tipster professionnel. Match : {match.home_team} vs {match.away_team} ({match.league}).
+        Tendances : 1({sim.proba_home:.1f}%) | X({sim.proba_draw:.1f}%) | 2({sim.proba_away:.1f}%). Score : {sim.most_likely_score}.
+        Rédige une analyse experte en 2 phrases du pari le plus solide. Si c'est un piège, commence par "VETO". Ne dis aucun chiffre.
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -58,42 +68,44 @@ class AIRiskManager:
                 )
                 if response.status_code == 200:
                     ans = response.json()['choices'][0]['message']['content'].strip()
-                    if "VETO" in ans.upper() or len(ans) < 15:
-                        return AIAuditReport(confidence_score=base_confidence, justification="VETO", is_approved=False)
-                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=True)
+                    is_approved = not ans.upper().startswith("VETO")
+                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=is_approved)
         except: pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Données sportives validées par l'algorithme.", is_approved=True)
+        return AIAuditReport(confidence_score=base_confidence, justification="Analyse validée par l'algorithme.", is_approved=True)
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
         portfolio = defaultdict(list)
         for match, sim, ai in evaluated_matches:
             if not ai.is_approved: continue
-                
             title = f"{match.home_team} vs {match.away_team}"
             
-            # --- ULTRA SAFE (FOOT) ---
+            # 1. ULTRA SAFE
             if sim.proba_home >= sim.proba_away:
-                dc_prob, dc_odds, dc_name = sim.proba_home + sim.proba_draw, 1.28, f"Double Chance : {match.home_team} ou Nul (1X)"
+                dc_prob, dc_odds, dc_name = sim.proba_home + sim.proba_draw, 1.28, f"Double Chance : {match.home_team} ou Nul"
             else:
-                dc_prob, dc_odds, dc_name = sim.proba_away + sim.proba_draw, 1.32, f"Double Chance : {match.away_team} ou Nul (X2)"
+                dc_prob, dc_odds, dc_name = sim.proba_away + sim.proba_draw, 1.32, f"Double Chance : {match.away_team} ou Nul"
             
             if dc_prob >= 75.0:
-                portfolio[TicketCategory.ULTRA_SAFE].append(GeneratedTicket(category=TicketCategory.ULTRA_SAFE, match_id=f"{match.match_id}_dc", match_title=title, bet_type=dc_name, odds=dc_odds, ai_confidence=ai.confidence_score, ai_justification=ai.justification))
-
-            # --- VIP (FOOT) ---
+                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, dc_name, dc_odds, ai))
+            
+            # 2. VIP
             best_team = match.home_team if sim.proba_home >= sim.proba_away else match.away_team
             best_odds = match.home_odds if sim.proba_home >= sim.proba_away else match.away_odds
             
             if max(sim.proba_home, sim.proba_away) >= 58.0 and best_odds >= 1.50:
-                portfolio[TicketCategory.VIP].append(GeneratedTicket(category=TicketCategory.VIP, match_id=f"{match.match_id}_vip", match_title=title, bet_type=f"Victoire {best_team}", odds=best_odds, ai_confidence=ai.confidence_score, ai_justification=ai.justification))
+                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {best_team}", best_odds, ai))
+                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Remboursé si Nul (DNB) : {best_team}", round(best_odds * 0.85, 2), ai))
 
-            # --- VALUE BETS ---
+            # 3. VALUE
             if sim.proba_btts >= 60.0:
-                portfolio[TicketCategory.VALUE].append(GeneratedTicket(category=TicketCategory.VALUE, match_id=f"{match.match_id}_btts", match_title=title, bet_type="Les deux équipes marquent (BTTS)", odds=1.75, ai_confidence=ai.confidence_score, ai_justification=ai.justification))
+                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Les 2 équipes marquent", 1.75, ai))
+            portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Score Exact : {sim.most_likely_score}", 7.50, ai))
 
-            # --- TOP OPPORTUNITÉS ---
-            if ai.confidence_score > 75.0:
-                portfolio[TicketCategory.TOP_OPP].append(GeneratedTicket(category=TicketCategory.TOP_OPP, match_id=f"{match.match_id}_top", match_title=title, bet_type=f"Opportunité Majeure : Victoire {best_team}", odds=best_odds, ai_confidence=ai.confidence_score, ai_justification=ai.justification))
+            # 4. MARKETS
+            portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, f"Plus de 8.5 corners", 1.72, ai))
                 
         return dict(portfolio)
+
+    def _create(self, cat, match, title, bet, odds, ai):
+        return GeneratedTicket(category=cat, match_id=f"{match.match_id}_{bet[:5]}", sport=match.sport, match_title=title, bet_type=bet, odds=round(odds, 2), ai_confidence=ai.confidence_score, ai_justification=ai.justification)
