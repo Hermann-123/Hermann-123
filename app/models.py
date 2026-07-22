@@ -1,3 +1,4 @@
+python
 from enum import Enum
 from pydantic import BaseModel
 from datetime import datetime
@@ -10,8 +11,8 @@ class SportType(Enum):
 class TicketCategory(Enum):
     ULTRA_SAFE = "Ultra Safe (Sécurité Max)"
     VIP = "VIP (Victoires & DNB)"
-    VALUE = "Value Bets (Buts & Scores)"
-    MARKETS = "Marchés Spéciaux (Corners)"
+    VALUE = "Value Bets (Buts, Scores & Handicaps)"
+    MARKETS = "Marchés Spéciaux (Corners & Mi-temps)"
 
 class MatchData(BaseModel):
     match_id: str
