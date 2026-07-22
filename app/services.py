@@ -48,19 +48,21 @@ class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_away)
         
-        # 🚫 RÈGLE 1 : Probabilité stricte > 60% minimum.
-        if base_confidence < 60.0:
-            return AIAuditReport(confidence_score=base_confidence, justification="VETO : Match trop incertain.", is_approved=False)
+        # Le modèle exige une forte probabilité interne (entre 58% et 70% pour garantir une cote rentable > 1.50)
+        if base_confidence < 58.0:
+            return AIAuditReport(confidence_score=base_confidence, justification="VETO : Modèle insuffisant.", is_approved=False)
 
         if not settings.GROQ_API_KEY:
-            return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement.", is_approved=True)
+            return AIAuditReport(confidence_score=base_confidence, justification="Analyse validée par le modèle mathématique.", is_approved=True)
 
-        # 🧠 RÈGLE 2 : IA poussée pour une analyse approfondie.
+        # 🧠 Analyse approfondie de l'IA (3 à 4 phrases tactiques)
         prompt = f"""
-        Tu es un Trader Sportif de haut niveau. Match DU JOUR : {match.home_team} vs {match.away_team}.
-        Tendances : 1({sim.proba_home:.1f}%) | X({sim.proba_draw:.1f}%) | 2({sim.proba_away:.1f}%). 
-        TA MISSION : Rédige une analyse tactique experte en 3 ou 4 phrases. Explique pourquoi c'est une excellente opportunité à prendre aujourd'hui.
-        Si c'est un piège, réponds UNIQUEMENT "VETO". Ne dis aucun pourcentage.
+        Tu es un expert en trading sportif et analyse de données. 
+        Match DU JOUR : {match.home_team} vs {match.away_team} ({match.league}).
+        Analyse quantitative : Victoire potentielle estimée à {base_confidence:.1f}%. Score logique : {sim.most_likely_score}.
+        
+        TA MISSION : Rédige une analyse approfondie et professionnelle de 3 à 4 phrases. Explique la structure du match, l'impact tactique et pourquoi ce pari offre un excellent rapport bénéfice/risque aujourd'hui.
+        Si le match présente le moindre risque caché, réponds UNIQUEMENT le mot "VETO". N'inclus aucun pourcentage brut dans ton texte.
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -72,9 +74,9 @@ class AIRiskManager:
                 if response.status_code == 200:
                     ans = response.json()['choices'][0]['message']['content'].strip()
                     is_approved = not ans.upper().startswith("VETO")
-                    return AIAuditReport(confidence_score=round(base_confidence + 5, 1), justification=ans, is_approved=is_approved)
+                    return AIAuditReport(confidence_score=round(base_confidence, 1), justification=ans, is_approved=is_approved)
         except: pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Analyse approfondie validée par l'algorithme.", is_approved=True)
+        return AIAuditReport(confidence_score=base_confidence, justification="Analyse tactique approfondie validée par l'algorithme.", is_approved=True)
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
@@ -83,40 +85,34 @@ class TicketFactory:
             if not ai.is_approved: continue
             title = f"{match.home_team} vs {match.away_team}"
             
-            # Calcul dynamique des vraies cotes estimées
             best_proba = max(sim.proba_home, sim.proba_away)
             best_team = match.home_team if best_proba == sim.proba_home else match.away_team
-            best_odds = round((100.0 / best_proba) * 0.95, 2) if best_proba > 0 else 1.0
+            
+            # Calcul de la cote réaliste basée sur notre probabilité interne (marge bookmaker incluse)
+            estimated_odds = round(100.0 / best_proba * 0.93, 2)
 
-            # 🚫 RÈGLE 3 : COTE MINIMUM STRICTE DE 1.50
-            if best_proba >= 60.0 and best_odds >= 1.50:
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {best_team}", best_odds, ai))
+            # 🎯 RÈGLE D'OR : Forte probabilité interne ET Cote strictement >= 1.50
+            if 58.0 <= best_proba <= 72.0 and estimated_odds >= 1.50:
+                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {best_team}", estimated_odds, ai))
                 
-            dnb_odds = round(best_odds * 0.85, 2)
-            if best_proba >= 60.0 and dnb_odds >= 1.50:
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"DNB : {best_team}", dnb_odds, ai))
+                # Option DNB (Draw No Bet) si la cote reste rentable
+                dnb_odds = round(estimated_odds * 0.82, 2)
+                if dnb_odds >= 1.50:
+                    portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"DNB (Remboursé si Nul) : {best_team}", dnb_odds, ai))
 
+            # Value Bets (BTTS ou Over si probabilité forte et cote >= 1.50)
             if sim.proba_btts >= 60.0:
-                btts_odds = round((100.0 / sim.proba_btts) * 0.95, 2) if sim.proba_btts > 0 else 1.0
+                btts_odds = round(100.0 / sim.proba_btts * 0.93, 2)
                 if btts_odds >= 1.50:
-                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Les 2 équipes marquent", btts_odds, ai))
-            
-            se_odds = round((100.0 / 12.0) * 0.95, 2)
-            if se_odds >= 1.50:
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, f"Score Exact : {sim.most_likely_score}", se_odds, ai))
+                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Les deux équipes marquent (BTTS)", btts_odds, ai))
 
-            # Ultra Safe (souvent vide car cote > 1.50 exigée)
-            dc_prob = sim.proba_home + sim.proba_draw if best_proba == sim.proba_home else sim.proba_away + sim.proba_draw
-            dc_odds = round((100.0 / dc_prob) * 0.95, 2) if dc_prob > 0 else 1.0
-            
-            if dc_prob >= 75.0 and dc_odds >= 1.50:
-                dc_name = f"Double Chance : {match.home_team} ou Nul" if best_proba == sim.proba_home else f"Double Chance : {match.away_team} ou Nul"
-                portfolio[TicketCategory.ULTRA_SAFE].append(self._create(TicketCategory.ULTRA_SAFE, match, title, dc_name, dc_odds, ai))
+            if sim.proba_over_2_5 >= 58.0:
+                o25_odds = round(100.0 / sim.proba_over_2_5 * 0.93, 2)
+                if o25_odds >= 1.50:
+                    portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Plus de 2.5 Buts", o25_odds, ai))
 
-            # Markets
-            corners_odds = 1.72
-            if corners_odds >= 1.50:
-                portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, "Plus de 8.5 corners", corners_odds, ai))
+            # Marchés Spéciaux (Corners)
+            portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, "Plus de 8.5 corners", 1.75, ai))
                 
         return dict(portfolio)
 
