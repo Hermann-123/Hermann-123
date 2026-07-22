@@ -10,6 +10,7 @@ dp = Dispatcher()
 router = Router()
 
 def main_keyboard():
+    # Ce clavier reprend exactement les noms que tu as dans ton fichier app/models.py
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=TicketCategory.ULTRA_SAFE.value), KeyboardButton(text=TicketCategory.VIP.value)],
@@ -20,6 +21,7 @@ def main_keyboard():
 
 @router.message(CommandStart())
 async def command_start(message: Message):
+    # Envoie le clavier dès qu'on tape /start
     await message.answer("🏛 **WALLSTREET OS - PRO MARKETS**\n\nSélectionnez une catégorie ci-dessous :", reply_markup=main_keyboard())
 
 @router.message(F.text.in_([c.value for c in TicketCategory]))
