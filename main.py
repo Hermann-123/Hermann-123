@@ -25,15 +25,15 @@ async def fetch_api_football_matches() -> list:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=20.0)
             if response.status_code == 200:
-                for f in response.json().get("response", [])[:40]: # Scanne 40 matchs pour trouver les pépites
+                for f in response.json().get("response", [])[:100]: 
                     fixture = f.get("fixture", {})
                     
-                    # 🚫 FILTRE STRICT 1 : UNIQUEMENT LES MATCHS DU JOUR MÊME
+                    # 🔒 SÉCURITÉ : Uniquement les matchs du jour même
                     match_date_full = str(fixture.get("date", ""))
                     if not match_date_full.startswith(today_str):
                         continue
                         
-                    # 🚫 FILTRE STRICT 2 : UNIQUEMENT LES MATCHS NON COMMENCÉS
+                    # 🔒 SÉCURITÉ : Uniquement les matchs non commencés
                     status = fixture.get("status", {}).get("short", "")
                     if status not in ["NS", "TBD"]: 
                         continue
@@ -52,7 +52,7 @@ async def fetch_api_football_matches() -> list:
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN] Recherche d'opportunités du jour (>1.50) en cours...")
+    logger.info("🔄 [SCAN PRO] Analyse des probabilités internes et recherche de cotes >= 1.50...")
     matches = await fetch_api_football_matches()
     evaluated = []
     
@@ -77,7 +77,7 @@ async def run_platform_pipeline():
                     alert_id = f"alert_{new_ticket.match_id}_{category.name}"
                     if alert_id not in core_module.SENT_ALERTS:
                         core_module.SENT_ALERTS.add(alert_id)
-                        alert_msg = f"🚨 **NOUVEAU SIGNAL DÉTECTÉ !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Va dans le bot principal pour sélectionner la catégorie du signal et obtenir le pronostic !*"
+                        alert_msg = f"🚨 **SIGNAL PRO DÉTECTÉ !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Va dans le bot principal pour sélectionner la catégorie du signal et obtenir ton analyse détaillée !*"
                         try:
                             await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
                             await asyncio.sleep(1)
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
 @app.get("/")
-async def health(): return {"status": "ONLINE - HAUTE RENTABILITE & MATCHS DU JOUR"}
+async def health(): return {"status": "ONLINE - STRATEGIE PRO ACTIVE"}
 
 if __name__ == "__main__":
     import os
