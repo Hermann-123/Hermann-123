@@ -1,3 +1,54 @@
+import asyncio
+import httpx
+import numpy as np
+from scipy.stats import poisson
+from typing import List, Tuple
+from datetime import datetime
+from collections import defaultdict
+import itertools
+import random
+
+from app.models import MatchData, SimulationResult, AIAuditReport, GeneratedTicket, TicketCategory, SportType
+from app.core import settings, logger
+
+class DixonColesEngine:
+    def __init__(self, rho: float = -0.15, home_advantage: float = 1.15):
+        self.rho = rho
+        self.home_advantage = home_advantage
+        self.max_goals = 6
+
+    def simulate(self, match: MatchData) -> SimulationResult:
+        lambda_x = (1.0 / match.home_odds) * 1.8 * self.home_advantage
+        mu_y = (1.0 / match.away_odds) * 1.8
+        matrix = np.zeros((self.max_goals, self.max_goals))
+
+        for i in range(self.max_goals):
+            for j in range(self.max_goals):
+                matrix[i, j] = poisson.pmf(i, lambda_x) * poisson.pmf(j, mu_y)
+        
+        matrix /= np.sum(matrix)
+        p_home = float(np.sum(np.tril(matrix, -1))) * 100
+        p_draw = float(np.sum(np.diag(matrix))) * 100
+        p_away = float(np.sum(np.triu(matrix, 1))) * 100
+
+        best_idx = np.argmax(matrix)
+        score_x, score_y = np.unravel_index(best_idx, matrix.shape)
+
+        p_btts = float(np.sum(matrix[1:, 1:])) * 100
+        p_o05 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 0])) * 100
+        p_o15 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 1])) * 100
+        p_o25 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 2])) * 100
+        p_o35 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 3])) * 100
+        p_o45 = float(np.sum([matrix[i, j] for i in range(self.max_goals) for j in range(self.max_goals) if i + j > 4])) * 100
+
+        est_corners = round(8.5 + (lambda_x + mu_y) * 1.5, 1)
+
+        return SimulationResult(
+            match_id=match.match_id, proba_home=p_home, proba_draw=p_draw, proba_away=p_away, 
+            most_likely_score=f"{score_x}-{score_y}", proba_btts=p_btts, 
+            proba_over_1_5=p_o15, proba_over_2_5=p_o25, proba_over_3_5=p_o35, estimated_corners=est_corners
+        )
+
 class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
@@ -8,7 +59,6 @@ class AIRiskManager:
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement.", is_approved=True)
 
-        # 🧠 NOUVEAU PROMPT IA : On exige des explications concrètes
         prompt = f"""
         En tant qu'expert analyste sportif, évalue le match : {match.home_team} vs {match.away_team}. 
         Le modèle mathématique donne {base_confidence:.1f}% de chance à ce pronostic.
@@ -69,11 +119,9 @@ class TicketFactory:
 
         def get_best_combo(pool_list, min_odds, max_odds, min_items, max_items):
             if not pool_list: return None
-            import random
             random.shuffle(pool_list)
             
             for r in range(min_items, max_items + 1):
-                import itertools
                 for combo in itertools.combinations(pool_list[:35], r):
                     match_ids = [x['match'].match_id for x in combo]
                     if len(set(match_ids)) != len(match_ids): continue
@@ -109,17 +157,15 @@ class TicketFactory:
         
         for i, c in enumerate(combo, 1):
             total_odds *= c['odds']
-            combo_proba_math *= (c['proba'] / 100.0) # Multiplication des probabilités
+            combo_proba_math *= (c['proba'] / 100.0)
             
-            # 🟢 AFFICHAGE DU POURCENTAGE PAR MATCH
+            # Affichage du pourcentage par match
             bet_text += f"*{i}️⃣ {c['match'].home_team} vs {c['match'].away_team}*\n👉 **{c['type']}**\n📊 Cote : {c['odds']} | 🎯 Confiance : {c['proba']:.1f}%\n\n"
             
-            # 🟢 EXPLICATION CONCRÈTE PAR MATCH
+            # Explication concrète par match
             ai_text += f"✔️ **{c['match'].home_team} vs {c['match'].away_team}** : {c['ai']}\n\n"
             
         total_odds = round(total_odds, 2)
-        
-        # 🟢 PROBABILITÉ GLOBALE DU COMBINÉ EN %
         final_combo_proba = round(combo_proba_math * 100, 1)
         bet_text += f"🔥 **PROBABILITÉ GLOBALE DU COMBINÉ : {final_combo_proba}%**\n"
         
