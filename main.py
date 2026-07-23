@@ -59,7 +59,7 @@ async def fetch_real_odds_matches() -> list:
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN COMBINÉS] Création des tickets combinés du jour...")
+    logger.info("🔄 [SCAN] Recherche de nouveaux combinés...")
     matches = await fetch_real_odds_matches()
     
     if not matches: return
@@ -73,35 +73,35 @@ async def run_platform_pipeline():
 
     new_portfolio = ticket_factory.build_portfolio(evaluated)
     
+    today_str = datetime.now().strftime("%Y-%m-%d")
     tickets_generes = 0
+    
     for category, tickets in new_portfolio.items():
         if category not in core_module.CACHE_PORTFOLIO:
             core_module.CACHE_PORTFOLIO[category] = []
             
         for new_ticket in tickets:
-            existing_ids = [t.match_id for t in core_module.CACHE_PORTFOLIO[category]]
+            # 🛑 ANTI-SPAM : On crée une clé unique pour aujourd'hui et pour cette catégorie
+            daily_alert_key = f"alert_{category.name}_{today_str}"
             
-            # Grâce à l'ID unique du combiné, on ne renverra jamais le même combiné deux fois
-            if new_ticket.match_id not in existing_ids:
-                core_module.CACHE_PORTFOLIO[category].append(new_ticket)
+            # Si on n'a pas encore envoyé de ticket pour cette catégorie aujourd'hui
+            if daily_alert_key not in core_module.SENT_ALERTS:
+                # On enregistre ce ticket en mémoire et on verrouille l'envoi pour aujourd'hui
+                core_module.CACHE_PORTFOLIO[category] = [new_ticket] # On écrase l'ancien pour ne garder que le meilleur du jour
+                core_module.SENT_ALERTS.add(daily_alert_key)
                 tickets_generes += 1
                 
                 if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
-                    alert_id = f"alert_{new_ticket.match_id}"
-                    if alert_id not in core_module.SENT_ALERTS:
-                        core_module.SENT_ALERTS.add(alert_id)
-                        
-                        # 🚨 MESSAGE ADAPTÉ POUR LES COMBINÉS
-                        titre_canal = "🌟 COMBINÉ DU JOUR" if category.name == "ULTRA_SAFE" else "💎 COMBINÉ VIP" if category.name == "VIP" else "🚀 VALUE BET"
-                        alert_msg = f"🚨 **NOUVEAU {titre_canal} DÉTECTÉ !**\n\n📈 **Cote atteinte : {new_ticket.odds}**\n\n👉 *Ouvre vite le bot principal pour récupérer ce combiné !*"
-                        try:
-                            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
-                            await asyncio.sleep(1)
-                        except: pass
+                    titre_canal = "🌟 COMBINÉ DU JOUR" if category.name == "ULTRA_SAFE" else "💎 COMBINÉ VIP" if category.name == "VIP" else "🚀 VALUE BET"
+                    alert_msg = f"🚨 **NOUVEAU {titre_canal} DÉTECTÉ ET ENREGISTRÉ !**\n\n📈 **Cote atteinte : {new_ticket.odds}**\n\n👉 *Ouvre le bot principal pour consulter ce ticket verrouillé pour aujourd'hui !*"
+                    try:
+                        await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
+                        await asyncio.sleep(1)
+                    except: pass
 
     if tickets_generes > 0 and settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} nouveaux TICKETS COMBINÉS sont disponibles dans le bot !")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} nouveaux TICKETS ont été verrouillés. Fini le scan pour ces catégories aujourd'hui, bon gain !")
         except: pass
 
 
@@ -110,11 +110,11 @@ async def lifespan(app: FastAPI):
     await bot.delete_webhook(drop_pending_updates=True)
     if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nMode Multiplicateur de Cotes activé. L'IA génère les combinés du jour...")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nSystème Anti-Spam activé. L'IA verrouillera un seul ticket par catégorie par jour.")
         except: pass
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_platform_pipeline, 'interval', minutes=30)
+    scheduler.add_job(run_platform_pipeline, 'interval', minutes=45) # Scan toutes les 45 mins
     scheduler.start()
     
     asyncio.create_task(run_platform_pipeline())
@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 @app.get("/")
-async def health(): return {"status": "ONLINE - SYSTEME DE COMBINES ACTIF"}
+async def health(): return {"status": "ONLINE - ANTI SPAM ACTIF"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), reload=False)
