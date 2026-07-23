@@ -10,7 +10,7 @@ import app.core as core_module
 from app.models import TicketCategory
 
 # Initialisation du bot Telegram
-bot = Bot(token=settings.TELEGRAM_TOKEN)
+bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
