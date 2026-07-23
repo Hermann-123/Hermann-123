@@ -5,6 +5,8 @@ from scipy.stats import poisson
 from typing import List, Tuple
 from datetime import datetime
 from collections import defaultdict
+import itertools
+import random
 
 from app.models import MatchData, SimulationResult, AIAuditReport, GeneratedTicket, TicketCategory, SportType
 from app.core import settings, logger
@@ -48,18 +50,18 @@ class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_away)
         
-        if base_confidence < 54.0:
+        # On valide les matchs fiables pour les combinés (55% minimum)
+        if base_confidence < 55.0:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO", is_approved=False)
 
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement.", is_approved=True)
 
-        # IA plus audacieuse : On lui demande d'analyser au lieu de chercher des excuses pour dire VETO
         prompt = f"""
-        En tant que Trader Sportif, analyse le match : {match.home_team} vs {match.away_team}.
-        Le modèle quantitatif donne un avantage avec un score probable de {sim.most_likely_score}.
-        Rédige une analyse tactique de 3 phrases pour confirmer cette opportunité. 
-        Si c'est un match totalement imprévisible (derby piège absolu), réponds UNIQUEMENT le mot "VETO". Sinon, donne ton analyse. Aucun pourcentage.
+        Tu es un expert en trading sportif.
+        Match : {match.home_team} vs {match.away_team}. Le modèle prévoit ce score : {sim.most_likely_score}.
+        TA MISSION : Rédige UNE SEULE PHRASE très courte et percutante expliquant pourquoi ce choix est idéal pour être placé dans un ticket combiné. 
+        Si le match est un piège, réponds UNIQUEMENT "VETO".
         """
         try:
             async with httpx.AsyncClient() as client:
@@ -73,35 +75,95 @@ class AIRiskManager:
                     is_approved = not ans.upper().startswith("VETO")
                     return AIAuditReport(confidence_score=round(base_confidence, 1), justification=ans, is_approved=is_approved)
         except: pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Analyse tactique robuste.", is_approved=True)
+        return AIAuditReport(confidence_score=base_confidence, justification="Sélection mathématique validée.", is_approved=True)
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
         portfolio = defaultdict(list)
+        
+        # 1. Extraction de tous les paris fiables de la journée
+        pool = []
         for match, sim, ai in evaluated_matches:
             if not ai.is_approved: continue
-            title = f"{match.home_team} vs {match.away_team}"
             
             best_proba = max(sim.proba_home, sim.proba_away)
             best_team = match.home_team if best_proba == sim.proba_home else match.away_team
+            win_odds = max(1.30, round(100.0 / best_proba * 1.02, 2)) # Marge réaliste
             
-            # Nous fixons mécaniquement la cote minimum à 1.50 sur les matchs validés (Value Bet garanti)
-            estimated_odds = max(1.50, round(100.0 / best_proba * 1.05, 2))
+            if best_proba >= 58.0:
+                pool.append({"match": match, "type": f"Victoire {best_team}", "odds": win_odds, "proba": best_proba, "ai": ai.justification})
+            
+            if sim.proba_btts >= 60.0:
+                btts_odds = max(1.40, round(100.0 / sim.proba_btts * 1.02, 2))
+                pool.append({"match": match, "type": "Les 2 équipes marquent", "odds": btts_odds, "proba": sim.proba_btts, "ai": ai.justification})
 
-            if best_proba >= 54.0:
-                portfolio[TicketCategory.VIP].append(self._create(TicketCategory.VIP, match, title, f"Victoire {best_team}", estimated_odds, ai))
-                
-            if sim.proba_btts >= 55.0:
-                btts_odds = max(1.50, round(100.0 / sim.proba_btts * 1.05, 2))
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Les deux équipes marquent (BTTS)", btts_odds, ai))
+        # 2. Le Moteur de Combinaison (Cherche à atteindre les cotes exactes)
+        def get_best_combo(pool_list, min_odds, max_odds, min_items, max_items):
+            random.shuffle(pool_list) # Mélange pour des tickets variés
+            pool_list = sorted(pool_list, key=lambda x: x['proba'], reverse=True)[:15] # Top 15 matchs les plus sûrs
+            
+            for r in range(min_items, max_items + 1):
+                for combo in itertools.combinations(pool_list, r):
+                    # Interdit de mettre 2 fois le même match dans le combiné
+                    match_ids = [x['match'].match_id for x in combo]
+                    if len(set(match_ids)) != len(match_ids): continue 
+                    
+                    total_odds = 1.0
+                    for x in combo: total_odds *= x['odds']
+                    
+                    if min_odds <= total_odds <= max_odds:
+                        return combo
+            return None
 
-            if sim.proba_over_2_5 >= 55.0:
-                o25_odds = max(1.50, round(100.0 / sim.proba_over_2_5 * 1.05, 2))
-                portfolio[TicketCategory.VALUE].append(self._create(TicketCategory.VALUE, match, title, "Plus de 2.5 Buts", o25_odds, ai))
+        # 3. CRÉATION DES COMBINÉS 
+        
+        # 🟢 Combiné du Jour (Cote cible : 2.2 à 3.5)
+        # On cherche 2 à 3 matchs très sûrs.
+        combo_jour = get_best_combo([p for p in pool if p['proba'] >= 65.0], 2.2, 3.5, 2, 3)
+        if combo_jour:
+            portfolio[TicketCategory.ULTRA_SAFE].append(self._format_combo(combo_jour, TicketCategory.ULTRA_SAFE, "🌟 COMBINÉ DU JOUR"))
 
-            portfolio[TicketCategory.MARKETS].append(self._create(TicketCategory.MARKETS, match, title, "Plus de 8.5 corners", 1.75, ai))
-                
+        # 🔵 Combiné VIP (Cote cible : 3.0 à 5.5)
+        # On assemble 3 à 4 matchs fiables.
+        combo_vip = get_best_combo(pool, 3.0, 5.5, 2, 4)
+        if combo_vip:
+            portfolio[TicketCategory.VIP].append(self._format_combo(combo_vip, TicketCategory.VIP, "💎 COMBINÉ VIP"))
+
+        # 🔴 Value Bet (Cote cible : 8.0 à infini, ici plafonné à 50.0)
+        # On combine 4 à 6 matchs pour faire exploser la cote.
+        combo_value = get_best_combo(pool, 8.0, 50.0, 3, 6)
+        if combo_value:
+            portfolio[TicketCategory.VALUE].append(self._format_combo(combo_value, TicketCategory.VALUE, "🚀 VALUE BET (COTE 8+)"))
+
         return dict(portfolio)
 
-    def _create(self, cat, match, title, bet, odds, ai):
-        return GeneratedTicket(category=cat, match_id=f"{match.match_id}_{bet[:5]}", sport=match.sport, match_title=title, bet_type=bet, odds=round(odds, 2), ai_confidence=ai.confidence_score, ai_justification=ai.justification)
+    def _format_combo(self, combo, cat, title):
+        total_odds = 1.0
+        bet_text = ""
+        ai_text = "🧠 **Rapport IA du Combiné :**\n"
+        avg_conf = 0.0
+        
+        # On assemble la présentation du ticket
+        for i, c in enumerate(combo, 1):
+            total_odds *= c['odds']
+            avg_conf += c['proba']
+            bet_text += f"*{i}️⃣ {c['match'].home_team} vs {c['match'].away_team}*\n👉 **{c['type']}** (Cote: {c['odds']})\n\n"
+            ai_text += f"✔️ {c['match'].home_team}: {c['ai']}\n"
+            
+        total_odds = round(total_odds, 2)
+        avg_conf = round(avg_conf / len(combo), 1)
+        
+        # Création d'un ID unique basé sur les matchs du combiné
+        ids = sorted([c['match'].match_id for c in combo])
+        unique_id = f"combo_{cat.name}_{'_'.join(ids)}"
+        
+        return GeneratedTicket(
+            category=cat, 
+            match_id=unique_id, 
+            sport=combo[0]['match'].sport, 
+            match_title=title, 
+            bet_type=bet_text.strip(), 
+            odds=total_odds, 
+            ai_confidence=avg_conf, 
+            ai_justification=ai_text.strip()
+        )
