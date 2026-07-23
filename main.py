@@ -21,22 +21,30 @@ ticket_factory = TicketFactory()
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 
 async def fetch_real_odds_matches() -> list:
-    """Utilise The Odds API pour obtenir les matchs et les VRAIES cotes en une seule requête."""
     url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
+    
+    # 📅 On récupère la date exacte d'aujourd'hui (ex: 2026-07-23)
+    today_str = datetime.now().strftime("%Y-%m-%d")
     
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=20.0)
             if response.status_code == 200:
                 data = response.json()
-                # On prend les 40 prochains gros matchs
-                for m in data[:40]:
+                
+                # On scanne la liste des matchs donnés par l'API
+                for m in data:
+                    commence_time = m.get('commence_time', '')
+                    
+                    # 🚫 FILTRE STRICT : On ignore tous les matchs qui ne se jouent pas "Aujourd'hui"
+                    if not commence_time.startswith(today_str):
+                        continue
+                        
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
                         cotes = {c['name']: c['price'] for c in m['bookmakers'][0]['markets'][0]['outcomes']}
                         home, away = m['home_team'], m['away_team']
                         
-                        # Si les cotes existent, on crée le match avec ses vraies valeurs
                         if home in cotes and away in cotes and 'Draw' in cotes:
                             matches.append(MatchData(
                                 match_id=m['id'],
@@ -49,20 +57,23 @@ async def fetch_real_odds_matches() -> list:
                                 draw_odds=cotes['Draw'],
                                 away_odds=cotes[away]
                             ))
+                            
+                            # On s'arrête dès qu'on a trouvé 40 matchs valides POUR AUJOURD'HUI
+                            if len(matches) >= 40:
+                                break
     except Exception as e:
         logger.error(f"Erreur API Cotes : {e}")
-        
-    # MODE SECOURS (Pour garantir un ticket de test)
-    if not matches:
-        matches = [
-            MatchData(match_id="test_1", sport=SportType.SOCCER, league="Test", match_date=datetime.now(), home_team="Real Madrid", away_team="Valence", home_odds=1.45, draw_odds=4.50, away_odds=6.50)
-        ]
         
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN] Analyse des vraies cotes avec l'IA Groq...")
+    logger.info("🔄 [SCAN] Recherche des matchs exclusifs d'AUJOURD'HUI...")
     matches = await fetch_real_odds_matches()
+    
+    if not matches:
+        logger.info("📭 Aucun match rentable trouvé pour aujourd'hui pour le moment.")
+        return
+
     evaluated = []
     
     for match in matches:
@@ -89,16 +100,16 @@ async def run_platform_pipeline():
                     alert_id = f"alert_{new_ticket.match_id}_{category.name}"
                     if alert_id not in core_module.SENT_ALERTS:
                         core_module.SENT_ALERTS.add(alert_id)
-                        alert_msg = f"🚨 **NOUVEAU SIGNAL RENTABLE !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Ouvre le bot principal pour obtenir ce ticket et son analyse détaillée !*"
+                        alert_msg = f"🚨 **NOUVEAU SIGNAL DU JOUR !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Ouvre le bot principal pour obtenir ce ticket et son analyse détaillée !*"
                         try:
                             await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
                             await asyncio.sleep(1)
                         except: pass
 
-    # MESSAGE DE SYNTHÈSE
+    # MESSAGE DE SYNTHÈSE SI DE NOUVEAUX TICKETS SONT LÀ
     if tickets_generes > 0 and settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} nouveaux pronostics validés par l'IA viennent d'être ajoutés !")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} pronostics pour les matchs d'AUJOURD'HUI ont été ajoutés !")
         except: pass
 
 
@@ -109,7 +120,7 @@ async def lifespan(app: FastAPI):
     # 🟢 LE BOT TE PARLE DIRECTEMENT AU DÉMARRAGE
     if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nL'IA lit les vraies cotes du marché. Recherche de pépites en cours...")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nFiltrage activé : L'IA recherche uniquement les matchs d'aujourd'hui avec une cote > 1.50.")
         except: pass
 
     scheduler = AsyncIOScheduler()
@@ -126,7 +137,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
 
 @app.get("/")
-async def health(): return {"status": "ONLINE - ODDS API (VRAIES COTES)"}
+async def health(): return {"status": "ONLINE - MATCHS DU JOUR EXCLUSIVEMENT"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), reload=False)
