@@ -17,14 +17,12 @@ soccer_engine = DixonColesEngine()
 ai_manager = AIRiskManager()
 ticket_factory = TicketFactory()
 
-# 🔑 TA CLÉ POUR AVOIR LES VRAIES COTES EN DIRECT
+# TA CLÉ THE ODDS API
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 
 async def fetch_real_odds_matches() -> list:
     url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
-    
-    # 📅 On récupère la date exacte d'aujourd'hui (ex: 2026-07-23)
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     try:
@@ -32,12 +30,8 @@ async def fetch_real_odds_matches() -> list:
             response = await client.get(url, timeout=20.0)
             if response.status_code == 200:
                 data = response.json()
-                
-                # On scanne la liste des matchs donnés par l'API
                 for m in data:
                     commence_time = m.get('commence_time', '')
-                    
-                    # 🚫 FILTRE STRICT : On ignore tous les matchs qui ne se jouent pas "Aujourd'hui"
                     if not commence_time.startswith(today_str):
                         continue
                         
@@ -57,25 +51,20 @@ async def fetch_real_odds_matches() -> list:
                                 draw_odds=cotes['Draw'],
                                 away_odds=cotes[away]
                             ))
-                            
-                            # On s'arrête dès qu'on a trouvé 40 matchs valides POUR AUJOURD'HUI
                             if len(matches) >= 40:
                                 break
     except Exception as e:
-        logger.error(f"Erreur API Cotes : {e}")
+        logger.error(f"Erreur API : {e}")
         
     return matches
 
 async def run_platform_pipeline():
-    logger.info("🔄 [SCAN] Recherche des matchs exclusifs d'AUJOURD'HUI...")
+    logger.info("🔄 [SCAN COMBINÉS] Création des tickets combinés du jour...")
     matches = await fetch_real_odds_matches()
     
-    if not matches:
-        logger.info("📭 Aucun match rentable trouvé pour aujourd'hui pour le moment.")
-        return
+    if not matches: return
 
     evaluated = []
-    
     for match in matches:
         sim = soccer_engine.simulate(match)
         ai_report = await ai_manager.evaluate_match(match, sim)
@@ -91,36 +80,37 @@ async def run_platform_pipeline():
             
         for new_ticket in tickets:
             existing_ids = [t.match_id for t in core_module.CACHE_PORTFOLIO[category]]
+            
+            # Grâce à l'ID unique du combiné, on ne renverra jamais le même combiné deux fois
             if new_ticket.match_id not in existing_ids:
                 core_module.CACHE_PORTFOLIO[category].append(new_ticket)
                 tickets_generes += 1
                 
-                # ENVOI SUR LE CANAL
                 if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
-                    alert_id = f"alert_{new_ticket.match_id}_{category.name}"
+                    alert_id = f"alert_{new_ticket.match_id}"
                     if alert_id not in core_module.SENT_ALERTS:
                         core_module.SENT_ALERTS.add(alert_id)
-                        alert_msg = f"🚨 **NOUVEAU SIGNAL DU JOUR !**\n\n🎯 Catégorie : **{category.value}**\n\n👉 *Ouvre le bot principal pour obtenir ce ticket et son analyse détaillée !*"
+                        
+                        # 🚨 MESSAGE ADAPTÉ POUR LES COMBINÉS
+                        titre_canal = "🌟 COMBINÉ DU JOUR" if category.name == "ULTRA_SAFE" else "💎 COMBINÉ VIP" if category.name == "VIP" else "🚀 VALUE BET"
+                        alert_msg = f"🚨 **NOUVEAU {titre_canal} DÉTECTÉ !**\n\n📈 **Cote atteinte : {new_ticket.odds}**\n\n👉 *Ouvre vite le bot principal pour récupérer ce combiné !*"
                         try:
                             await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=alert_msg)
                             await asyncio.sleep(1)
                         except: pass
 
-    # MESSAGE DE SYNTHÈSE SI DE NOUVEAUX TICKETS SONT LÀ
     if tickets_generes > 0 and settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} pronostics pour les matchs d'AUJOURD'HUI ont été ajoutés !")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text=f"✅ {tickets_generes} nouveaux TICKETS COMBINÉS sont disponibles dans le bot !")
         except: pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # 🟢 LE BOT TE PARLE DIRECTEMENT AU DÉMARRAGE
     if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
         try:
-            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nFiltrage activé : L'IA recherche uniquement les matchs d'aujourd'hui avec une cote > 1.50.")
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **SERVEUR EN LIGNE !**\nMode Multiplicateur de Cotes activé. L'IA génère les combinés du jour...")
         except: pass
 
     scheduler = AsyncIOScheduler()
@@ -135,9 +125,8 @@ async def lifespan(app: FastAPI):
     await bot.session.close()
 
 app = FastAPI(title="WallStreet OS", lifespan=lifespan)
-
 @app.get("/")
-async def health(): return {"status": "ONLINE - MATCHS DU JOUR EXCLUSIVEMENT"}
+async def health(): return {"status": "ONLINE - SYSTEME DE COMBINES ACTIF"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), reload=False)
