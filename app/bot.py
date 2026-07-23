@@ -16,14 +16,18 @@ router = Router()
 class Form(StatesGroup):
     waiting_for_manual_match = State()
 
-# ⌨️ LE CLAVIER FIXE EN BAS DE L'ÉCRAN (ReplyKeyboard)
+# 🎛️ CLAVIER EN GRILLE 2x2 (2 boutons par ligne)
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🌟 Combiné du Jour (Cote 2.2 à 3.5)")],
-            [KeyboardButton(text="💎 Combiné VIP (Cote 3.0 à 5.5)")],
-            [KeyboardButton(text="🚀 Value Bet (Cote 8.0+)")],
-            [KeyboardButton(text="📊 Analyse Manuelle")]
+            [
+                KeyboardButton(text="🌟 Combiné du Jour"),
+                KeyboardButton(text="💎 Combiné VIP")
+            ],
+            [
+                KeyboardButton(text="🚀 Value Bet"),
+                KeyboardButton(text="📊 Analyse Manuelle")
+            ]
         ],
         resize_keyboard=True,
         is_persistent=True
@@ -40,17 +44,17 @@ async def command_start(message: Message):
     )
     await message.answer(text, reply_markup=main_keyboard(), parse_mode="Markdown")
 
-# 📲 GESTION DES CLICS SUR LE CLAVIER DU BAS
+# 📲 GESTION DES CLICS SUR LES BOUTONS DU CLAVIER
 @router.message(F.text.in_([
-    "🌟 Combiné du Jour (Cote 2.2 à 3.5)",
-    "💎 Combiné VIP (Cote 3.0 à 5.5)",
-    "🚀 Value Bet (Cote 8.0+)"
+    "🌟 Combiné du Jour",
+    "💎 Combiné VIP",
+    "🚀 Value Bet"
 ]))
 async def fetch_tickets_by_text(message: Message):
     text_map = {
-        "🌟 Combiné du Jour (Cote 2.2 à 3.5)": TicketCategory.ULTRA_SAFE,
-        "💎 Combiné VIP (Cote 3.0 à 5.5)": TicketCategory.VIP,
-        "🚀 Value Bet (Cote 8.0+)": TicketCategory.VALUE_BET if hasattr(TicketCategory, 'VALUE_BET') else TicketCategory.VALUE
+        "🌟 Combiné du Jour": TicketCategory.ULTRA_SAFE,
+        "💎 Combiné VIP": TicketCategory.VIP,
+        "🚀 Value Bet": TicketCategory.VALUE_BET if hasattr(TicketCategory, 'VALUE_BET') else TicketCategory.VALUE
     }
     
     category = text_map.get(message.text)
@@ -64,7 +68,7 @@ async def fetch_tickets_by_text(message: Message):
     
     response = f"🏛 **{t.match_title}**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
     response += f"{t.bet_type}\n\n"
-    response += f"📈 **COTE TOTale : {t.odds}**\n\n"
+    response += f"📈 **COTE TOTALE : {t.odds}**\n\n"
     response += f"{t.ai_justification}\n"
         
     await message.answer(response, parse_mode="Markdown")
