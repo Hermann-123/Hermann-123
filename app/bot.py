@@ -40,10 +40,10 @@ async def command_start(message: Message):
         "⚡️ Flux The Odds API : Connecté\n"
         "⚙️ Moteur Combinatoire : Actif\n"
         "🤖 IA Groq : Connectée\n\n"
-        "Utilisez le clavier en bas pour sélectionner votre combiné :"
-    )
+        "👤 créateur : @hermann1123\n"
+        "Utilisez le clavier en bas pour sélectionner votre combiné :")
     await message.answer(text, reply_markup=main_keyboard(), parse_mode="Markdown")
-
+)
 # 📲 GESTION DES CLICS SUR LES BOUTONS DU CLAVIER
 @router.message(F.text.in_([
     "🌟 Combiné du Jour",
