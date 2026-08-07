@@ -56,32 +56,21 @@ class AIRiskManager:
         if base_confidence < 45.0:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO", is_approved=False)
 
-        # 🧠 NOUVEAUTÉ : Le code identifie le pronostic mathématique principal avant de parler à l'IA
-        primary_bet = "Résultat très incertain"
-        if sim.proba_btts < 40.0:
-            primary_bet = "Les 2 équipes marquent : Non (BTTS Non)"
-        elif sim.proba_over_2_5 < 35.0:
-            primary_bet = "Moins de 2,5 buts dans le match"
-        elif sim.proba_home >= 55.0:
-            primary_bet = f"Victoire de {match.home_team}"
-        elif sim.proba_away >= 55.0:
-            primary_bet = f"Victoire de {match.away_team}"
-        elif sim.proba_btts >= 62.0:
-            primary_bet = "Les 2 équipes marquent : Oui (BTTS Oui)"
-        elif sim.proba_over_2_5 >= 60.0:
-            primary_bet = "Plus de 2,5 buts dans le match"
-
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement par l'algorithme.", is_approved=True)
 
-        # 🎯 LE NOUVEAU PROMPT : L'IA est obligée de justifier le choix mathématique
+        # 🎯 PROMPT ULTRA-STRICT : Analyse tactique directe sans blabla ni nom de pari
         prompt = f"""
-        En tant que trader sportif expert, analyse ce match : {match.home_team} vs {match.away_team}. 
-        Mon algorithme mathématique a décidé de placer un pari strictement sur ce marché : **{primary_bet}**.
+        Tu es un analyste sportif intransigeant. Analyse ce match : {match.home_team} vs {match.away_team}.
         
-        Mission : Rédige un rapport technique de 3 lignes qui justifie UNIQUEMENT ce choix précis. Parle de la solidité défensive, de la dynamique ou de l'attaque pour prouver que ce pari est excellent. 
-        INTERDICTION FORMELLE de donner un vainqueur si le pari concerne les buts (Over/Under/BTTS).
-        Si tu détectes un piège de bookmaker (match sans enjeu, blessures majeures), réponds UNIQUEMENT par le mot "VETO".
+        Mission : Rédige UNE SEULE phrase percutante (maximum 3 lignes) sur la dynamique tactique du match (forces offensives, solidité défensive, ou probabilité de match fermé/ouvert).
+        
+        CONSIGNES STRICTES (Sinon tu seras désactivé) :
+        - NE NOMME JAMAIS de type de pari (interdiction d'écrire "victoire", "BTTS", "Under/Over").
+        - AUCUNE INTRODUCTION (ne dis pas "Voici le rapport" ou "Analyse du match").
+        - AUCUNE CONCLUSION ou parenthèse de rappel.
+        - Commence directement par ton analyse factuelle.
+        - Si tu détectes un piège (match amical, équipe bis), réponds UNIQUEMENT par le mot "VETO".
         """
         
         try:
