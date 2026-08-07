@@ -52,20 +52,38 @@ class AIRiskManager:
     async def evaluate_match(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
-        # Filtre initial : On rejette d'office les matchs trop imprévisibles (< 45% de certitude)
+        # Filtre initial : Rejet des matchs imprévisibles (< 45% de certitude)
         if base_confidence < 45.0:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO", is_approved=False)
+
+        # 🧠 NOUVEAUTÉ : Le code identifie le pronostic mathématique principal avant de parler à l'IA
+        primary_bet = "Résultat très incertain"
+        if sim.proba_btts < 40.0:
+            primary_bet = "Les 2 équipes marquent : Non (BTTS Non)"
+        elif sim.proba_over_2_5 < 35.0:
+            primary_bet = "Moins de 2,5 buts dans le match"
+        elif sim.proba_home >= 55.0:
+            primary_bet = f"Victoire de {match.home_team}"
+        elif sim.proba_away >= 55.0:
+            primary_bet = f"Victoire de {match.away_team}"
+        elif sim.proba_btts >= 62.0:
+            primary_bet = "Les 2 équipes marquent : Oui (BTTS Oui)"
+        elif sim.proba_over_2_5 >= 60.0:
+            primary_bet = "Plus de 2,5 buts dans le match"
 
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement par l'algorithme.", is_approved=True)
 
-        # 🔴 LA MISE À JOUR EST ICI : Le prompt exige 3 lignes d'explications détaillées
+        # 🎯 LE NOUVEAU PROMPT : L'IA est obligée de justifier le choix mathématique
         prompt = f"""
-        En tant que trader sportif expert, valide ce match : {match.home_team} vs {match.away_team}. 
-        Modèle mathématique : {base_confidence:.1f}% de confiance.
-        Génère un rapport d'analyse détaillé d'environ 3 lignes expliquant précisément pourquoi ce pronostic est fiable (analyse du contexte, dynamique des équipes, solidité défensive).
-        Si le match sent le piège pour les parieurs (match sans enjeu, derby tendu, etc.), réponds UNIQUEMENT par le mot "VETO".
+        En tant que trader sportif expert, analyse ce match : {match.home_team} vs {match.away_team}. 
+        Mon algorithme mathématique a décidé de placer un pari strictement sur ce marché : **{primary_bet}**.
+        
+        Mission : Rédige un rapport technique de 3 lignes qui justifie UNIQUEMENT ce choix précis. Parle de la solidité défensive, de la dynamique ou de l'attaque pour prouver que ce pari est excellent. 
+        INTERDICTION FORMELLE de donner un vainqueur si le pari concerne les buts (Over/Under/BTTS).
+        Si tu détectes un piège de bookmaker (match sans enjeu, blessures majeures), réponds UNIQUEMENT par le mot "VETO".
         """
+        
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -89,41 +107,31 @@ class TicketFactory:
             if not ai.is_approved: continue
             
             p_home, p_draw, p_away = sim.proba_home, sim.proba_draw, sim.proba_away
-            
             base_confidence = max(p_home, p_draw, p_away) 
             
-            # 🟢 1. MARCHÉS COMPOSÉS POUR LE FAVORI À DOMICILE
             if p_home >= 55.0:
                 pool.append({"match": match, "type": f"Victoire {match.home_team} (1)", "odds": max(1.35, round(100.0/p_home*0.92, 2)), "proba": p_home, "ai": ai.justification})
-                
                 if p_home >= 72.0:
                     pool.append({"match": match, "type": f"Handicap -1 : {match.home_team}", "odds": max(1.65, round(100.0/(p_home-15)*0.92, 2)), "proba": p_home - 15, "ai": ai.justification})
                     pool.append({"match": match, "type": f"Mi-Temps / Fin de match : {match.home_team} / {match.home_team}", "odds": max(1.85, round(100.0/(base_confidence-18)*0.92, 2)), "proba": base_confidence - 18, "ai": ai.justification})
-                
                 if p_home >= 60.0 and sim.proba_over_1_5 >= 70.0:
                     pool.append({"match": match, "type": f"Combo : {match.home_team} gagne ET Plus de 1.5 buts", "odds": max(1.50, round(100.0/(p_home-10)*0.92, 2)), "proba": p_home - 10, "ai": ai.justification})
-                
                 if p_home >= 65.0 and sim.proba_btts < 40.0:
                     pool.append({"match": match, "type": f"{match.home_team} gagne sans encaisser (Clean Sheet)", "odds": max(1.80, round(100.0/(p_home-15)*0.92, 2)), "proba": p_home - 15, "ai": ai.justification})
 
-            # 🟢 2. MARCHÉS COMPOSÉS POUR LE FAVORI À L'EXTÉRIEUR
             if p_away >= 55.0:
                 pool.append({"match": match, "type": f"Victoire {match.away_team} (2)", "odds": max(1.35, round(100.0/p_away*0.92, 2)), "proba": p_away, "ai": ai.justification})
-                
                 if p_away >= 72.0:
                     pool.append({"match": match, "type": f"Handicap -1 : {match.away_team}", "odds": max(1.65, round(100.0/(p_away-15)*0.92, 2)), "proba": p_away - 15, "ai": ai.justification})
                     pool.append({"match": match, "type": f"Mi-Temps / Fin de match : {match.away_team} / {match.away_team}", "odds": max(1.85, round(100.0/(base_confidence-18)*0.92, 2)), "proba": base_confidence - 18, "ai": ai.justification})
-                
                 if p_away >= 60.0 and sim.proba_over_1_5 >= 70.0:
                     pool.append({"match": match, "type": f"Combo : {match.away_team} gagne ET Plus de 1.5 buts", "odds": max(1.50, round(100.0/(p_away-10)*0.92, 2)), "proba": p_away - 10, "ai": ai.justification})
 
-            # 🟢 3. DOUBLES CHANCES & DNB (Haute sécurité)
             if p_home + p_draw >= 82.0:
                 pool.append({"match": match, "type": f"Double Chance (1X) : {match.home_team} ou Nul", "odds": max(1.15, round(100.0/(p_home+p_draw)*0.92, 2)), "proba": p_home+p_draw, "ai": ai.justification})
             if p_away + p_draw >= 82.0:
                 pool.append({"match": match, "type": f"Double Chance (X2) : {match.away_team} ou Nul", "odds": max(1.15, round(100.0/(p_away+p_draw)*0.92, 2)), "proba": p_away+p_draw, "ai": ai.justification})
 
-            # 🟢 4. MARCHÉS EXCLUSIFS SUR LES BUTS (Over / Under)
             if sim.proba_over_1_5 >= 78.0:
                 pool.append({"match": match, "type": "Plus de 1,5 buts dans le match", "odds": max(1.20, round(100.0/sim.proba_over_1_5*0.92, 2)), "proba": sim.proba_over_1_5, "ai": ai.justification})
             if sim.proba_over_2_5 >= 60.0:
@@ -131,7 +139,6 @@ class TicketFactory:
             if sim.proba_over_2_5 < 35.0:
                 pool.append({"match": match, "type": "Moins de 2,5 buts dans le match", "odds": max(1.55, round(100.0/(100-sim.proba_over_2_5)*0.92, 2)), "proba": 100 - sim.proba_over_2_5, "ai": ai.justification})
 
-            # 🟢 5. BTTS ET COMBOS BTTS
             if sim.proba_btts >= 62.0:
                 pool.append({"match": match, "type": "Les 2 équipes marquent (BTTS : Oui)", "odds": max(1.65, round(100.0/sim.proba_btts*0.92, 2)), "proba": sim.proba_btts, "ai": ai.justification})
                 if sim.proba_over_2_5 >= 65.0:
@@ -139,11 +146,9 @@ class TicketFactory:
             elif sim.proba_btts < 40.0:
                 pool.append({"match": match, "type": "Les 2 équipes marquent (BTTS : Non)", "odds": max(1.60, round(100.0/(100-sim.proba_btts)*0.92, 2)), "proba": 100 - sim.proba_btts, "ai": ai.justification})
 
-            # 🟢 6. SCORE EXACT (Uniquement pour Value Bet)
             if base_confidence >= 70.0:
                 pool.append({"match": match, "type": f"Score Exact Probable : {sim.most_likely_score}", "odds": 7.00, "proba": 15.0, "ai": ai.justification})
 
-        # 🚀 L'ALGORITHME DE SÉLECTION STRICTE DES FAVORIS
         def get_best_combo(pool_list, min_odds, max_odds, min_items, max_items, min_proba_threshold=0.0):
             if not pool_list: return None
             
