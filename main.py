@@ -51,7 +51,7 @@ async def fetch_real_odds_matches() -> list:
                                 draw_odds=cotes['Draw'],
                                 away_odds=cotes[away]
                             ))
-                            if len(matches) >= 40:
+                            if len(matches) >= 100:
                                 break
     except Exception as e:
         logger.error(f"Erreur API : {e}")
