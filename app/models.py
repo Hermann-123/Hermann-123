@@ -23,6 +23,14 @@ class MatchData(BaseModel):
     home_odds: float = 1.90
     draw_odds: float = 3.40
     away_odds: float = 3.80
+    
+    # 🛡️ BOUCLIER ANTI-CRASH : Valeurs par défaut neutres (1 but par match)
+    # Cela permet à np.mean() de calculer une moyenne de 1.0 sans planter.
+    home_recent_scores: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
+    home_recent_conceded: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
+    away_recent_scores: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
+    away_recent_conceded: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
+
 
 class SimulationResult(BaseModel):
     match_id: str
