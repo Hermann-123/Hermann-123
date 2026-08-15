@@ -15,9 +15,8 @@ from app.models import MatchData, SportType
 from app.services import pipeline
 from app.bot import bot, dp
 
-# 🔑 TES CLÉS API
-API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
-# Remplace ceci par ta clé API-Football (API-Sports)
+# 🔑 TES CLÉS API (À REMPLIR AVANT LE DÉPLOIEMENT)
+API_KEY_ODDS = "820b68b7e046cb5241ce0851adf0bfb6"
 API_KEY_FOOTBALL = "TA_CLE_API_FOOTBALL_ICI" 
 
 # ============================================================
@@ -73,7 +72,6 @@ async def fetch_recent_stats(team_name: str, client: httpx.AsyncClient) -> tuple
                         scores.append(float(away_goals))
                         conceded.append(float(home_goals))
                 
-                # Si on a récupéré des stats, on les renvoie, sinon par défaut
                 if scores and conceded:
                     return (scores, conceded)
                     
@@ -92,7 +90,6 @@ async def fetch_real_odds_matches() -> list:
     
     try:
         async with httpx.AsyncClient() as client:
-            # Récupération des cotes
             response = await client.get(url_odds, timeout=20.0)
             if response.status_code != 200:
                 logger.error(f"❌ Erreur API Bookmaker : {response.status_code}")
@@ -126,19 +123,16 @@ async def fetch_real_odds_matches() -> list:
 
                     if "1" in bookmaker_odds and "X" in bookmaker_odds and "2" in bookmaker_odds:
                         
-                        # 🧠 NOUVEAU : Récupération asynchrone des statistiques réelles
                         logger.info(f"📊 Extraction des stats pour : {home_team} vs {away_team}")
                         home_scores, home_conceded = await fetch_recent_stats(home_team, client)
                         away_scores, away_conceded = await fetch_recent_stats(away_team, client)
                         
-                        # Respect des limites d'API
                         await asyncio.sleep(0.5)
 
                         match_data = MatchData(
                             match_id=m['id'], sport=SportType.SOCCER, league=m['sport_title'],
                             match_date=datetime.now(), home_team=home_team, away_team=away_team,
                             home_odds=bookmaker_odds["1"], draw_odds=bookmaker_odds["X"], away_odds=bookmaker_odds["2"],
-                            # Intégration des performances récentes
                             home_recent_scores=home_scores, home_recent_conceded=home_conceded,
                             away_recent_scores=away_scores, away_recent_conceded=away_conceded
                         )
@@ -191,10 +185,17 @@ async def run_platform_pipeline():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await bot.delete_webhook(drop_pending_updates=True)
+    # 🛡️ BOUCLIER ANTI-CRASH TELEGRAM
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible de supprimer le webhook au démarrage (Ignoré) : {e}")
+
     if settings.ARCHIVE_CHANNEL_ID and settings.ARCHIVE_CHANNEL_ID != "-100VOTRE_ID_ICI":
-        try: await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **WALLSTREET OS : MOTEUR STATISTIQUE EN LIGNE !**")
-        except: pass
+        try: 
+            await bot.send_message(chat_id=settings.ARCHIVE_CHANNEL_ID, text="🟢 **WALLSTREET OS : MOTEUR STATISTIQUE EN LIGNE !**")
+        except: 
+            pass
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(run_platform_pipeline, 'interval', minutes=45) 
