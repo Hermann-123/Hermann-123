@@ -59,33 +59,163 @@ class AIRiskManager:
         if not settings.GROQ_API_KEY:
             return AIAuditReport(confidence_score=base_confidence, justification="Validé mathématiquement par l'algorithme.", is_approved=True)
 
-        # 🎯 PROMPT ULTRA-STRICT : Analyse tactique directe sans blabla ni nom de pari
+        =True)
+
+        # 🧠 APPEL IA : Utilisation de Llama-3.1-8b-instant pour valider le risque
         prompt = f"""
-        Tu es un analyste sportif intransigeant. Analyse ce match : {match.home_team} vs {match.away_team}.
+        Tu es le gestionnaire des risques d'un algorithme de paris sportifs. 
+        Match : {match.home_team} vs {match.away_team}.
         
-        Mission : Rédige UNE SEULE phrase percutante (maximum 3 lignes) sur la dynamique tactique du match (forces offensives, solidité défensive, ou probabilité de match fermé/ouvert).
+        DONNÉES STATISTIQUES (Modèle de Poisson ajusté sur la forme récente) :
+        - Victoire {match.home_team} : {round(sim.proba_home, 1)}%
+        - Match Nul : {round(sim.proba_draw, 1)}%
+        - Victoire {match.away_team} : {round(sim.proba_away, 1)}%
+        - Plus de 2.5 buts : {round(sim.proba_over_2_5, 1)}%
+        - Les deux marquent (BTTS) : {round(sim.proba_btts, 1)}%
         
-        CONSIGNES STRICTES (Sinon tu seras désactivé) :
-        - NE NOMME JAMAIS de type de pari (interdiction d'écrire "victoire", "BTTS", "Under/Over").
-        - AUCUNE INTRODUCTION (ne dis pas "Voici le rapport" ou "Analyse du match").
-        - AUCUNE CONCLUSION ou parenthèse de rappel.
-        - Commence directement par ton analyse factuelle.
-        - Si tu détectes un piège (match amical, équipe bis), réponds UNIQUEMENT par le mot "VETO".
+        Mission :
+        1. Analyse ces probabilités.
+        2. Détermine si le match est suffisamment déséquilibré ou prévisible pour être joué de manière "Ultra Safe".
+        3. Si les données sont trop serrées, réponds "VETO".
+        
+        Renvoie UNIQUEMENT un JSON strict : 
+        {{"decision": "ACCEPT" ou "VETO", "reason": "Justification de 15 mots max"}}
         """
-        
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}]}, timeout=10.0
+                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}]},
+                    timeout=12.0
                 )
+                
                 if response.status_code == 200:
-                    ans = response.json()['choices'][0]['message']['content'].strip()
-                    is_approved = not ans.upper().startswith("VETO")
-                    return AIAuditReport(confidence_score=round(base_confidence, 1), justification=ans, is_approved=is_approved)
-        except: pass
-        return AIAuditReport(confidence_score=base_confidence, justification="Indicateurs statistiques au vert, validation du modèle.", is_approved=True)
+                    content = response.json()['choices'][0]['message']['content'].strip()
+                    # Nettoyage robuste du JSON
+                    start = content.find('{')
+                    end = content.rfind('}')
+                    if start != -1 and end != -1:
+                        data = json.loads(content[start:end+1])
+                        
+                        if data.get("decision") == "ACCEPT":
+                            return AIAuditReport(
+                                confidence_score=base_confidence, 
+                                justification=data.get("reason", "Validation IA."), 
+                                is_approved=True
+                            )
+                        return AIAuditReport(confidence_score=base_confidence, justification="VETO IA", is_approved=False)
+        except Exception as e:
+            logger.error(f"Erreur IA sur {match.home_team}: {e}")
+            
+        # Mode Survie en cas d'échec de l'API Groq
+        return AIAuditReport(
+            confidence_score=base_confidence, 
+            justification="Approuvé par sécurité mathématique (IA hors ligne).", 
+            is_approved=True
+        )
+
+# ============================================================
+# 3. LE GÉNÉRATEUR ET FILTRE (VRAIES COTES ET EDGE)
+# ============================================================
+class MarketAnalyzer:
+    def generate_candidates(self, match: MatchData, sim: SimulationResult, bookmaker_odds: dict) -> List[dict]:
+        candidates = []
+        
+        def add_candidate(m_type, selection, proba, odds_key):
+            real_odds = bookmaker_odds.get(odds_key)
+            if real_odds:
+                implied = (1.0 / real_odds) * 100
+                edge = proba - implied
+                # Filtre : Edge positif et probabilité minimale de 52%
+                if edge > 0 and proba >= 52.0 and 1.25 <= real_odds <= 2.20:
+                    candidates.append({
+                        "match": match, "market": m_type, "selection": selection, 
+                        "probability": proba, "odds": real_odds, "edge": edge
+                    })
+
+        add_candidate("1X2", f"Victoire {match.home_team}", sim.proba_home, "1")
+        add_candidate("1X2", f"Victoire {match.away_team}", sim.proba_away, "2")
+        add_candidate("OVER_UNDER", "Plus de 1,5 buts", sim.proba_over_1_5, "O1.5")
+        add_candidate("OVER_UNDER", "Plus de 2,5 buts", sim.proba_over_2_5, "O2.5")
+        add_candidate("OVER_UNDER", "Moins de 2,5 buts", 100 - sim.proba_over_2_5, "U2.5")
+        add_candidate("BTTS", "BTTS Oui", sim.proba_btts, "BTTS_Y")
+        add_candidate("BTTS", "BTTS Non", 100 - sim.proba_btts, "BTTS_N")
+
+        # Tri par Edge décroissant
+        candidates.sort(key=lambda x: x['edge'], reverse=True)
+        return candidates[:3] # On retourne les 3 meilleures "Value Bets"
+
+# ============================================================
+# 4. L'USINE À TICKETS (Règles strictes 2 matchs)
+# ============================================================
+class TicketFactory:
+    def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, dict, AIAuditReport]]):
+        portfolio = defaultdict(list)
+        pool = []
+        
+        for match, candidate, ai_res in evaluated_matches:
+            if ai_res.is_approved and candidate:
+                pool.append({
+                    "match": match, 
+                    "type": candidate["selection"], 
+                    "odds": candidate["odds"], 
+                    "proba": candidate["probability"], 
+                    "edge": candidate["edge"],
+                    "ai": ai_res.justification
+                })
+
+        # Assemblage : Exactement 2 matchs, Cote 2.2 à 3.5
+        pool.sort(key=lambda x: x['edge'], reverse=True)
+        
+        for combo in itertools.combinations(pool[:15], 2):
+            total_odds = combo[0]["odds"] * combo[1]["odds"]
+            if 2.2 <= round(total_odds, 2) <= 3.5:
+                bet_text = ""
+                ai_text = ""
+                for i, item in enumerate(combo, 1):
+                    bet_text += f"*{i}️⃣ {item['match'].home_team} vs {item['match'].away_team}*\n👉 **{item['type']}**\n📊 Cote : {item['odds']} | 🎯 Proba : {item['proba']:.1f}%\n\n"
+                    ai_text += f"✔️ **{item['match'].home_team}** : {item['ai']}\n"
+                
+                final_proba = round((combo[0]["proba"]/100) * (combo[1]["proba"]/100) * 100, 1)
+                
+                ticket = GeneratedTicket(
+                    category=TicketCategory.ULTRA_SAFE, match_id="combo_value", sport=SportType.SOCCER,
+                    match_title="🌟 COMBINÉ VALUE BET (FORME RÉCENTE)", bet_type=bet_text.strip(), odds=round(total_odds, 2),
+                    ai_confidence=final_proba, ai_justification=ai_text.strip()
+                )
+                portfolio[TicketCategory.ULTRA_SAFE].append(ticket)
+                break 
+
+        return dict(portfolio)
+
+# ============================================================
+# 5. PIPELINE GLOBAL 
+# ============================================================
+class AnalysisPipeline:
+    def __init__(self):
+        self.math_engine = DixonColesEngine()
+        self.market_analyzer = MarketAnalyzer()
+        self.ai_manager = AIRiskManager()
+        self.ticket_factory = TicketFactory()
+
+    async def analyze_match(self, match: MatchData, bookmaker_odds: dict):
+        simulation = self.math_engine.simulate(match)
+        candidates = self.market_analyzer.generate_candidates(match, simulation, bookmaker_odds)
+        
+        best_candidate = candidates[0] if candidates else None
+        
+        ai_report = await self.ai_manager.evaluate_match(match, simulation)
+        return (match, best_candidate, ai_report)
+
+    async def build_daily_portfolio(self, matches_and_odds: List[Tuple[MatchData, dict]]):
+        tasks = [self.analyze_match(m, odds) for m, odds in matches_and_odds]
+        evaluated = await asyncio.gather(*tasks)
+        return self.ticket_factory.build_portfolio(evaluated)
+
+pipeline = AnalysisPipeline()
+
 
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
