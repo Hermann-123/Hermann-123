@@ -17,7 +17,7 @@ from app.bot import bot, dp
 
 # 🔑 TES CLÉS API (À REMPLIR AVANT LE DÉPLOIEMENT)
 API_KEY_ODDS = "820b68b7e046cb5241ce0851adf0bfb6"
-API_KEY_FOOTBALL = "TA_CLE_API_FOOTBALL_ICI" 
+API_KEY_FOOTBALL = "1490e61cd2msh42a435a73bd2746p149d7djsnba230b3bb22b" 
 
 # ============================================================
 # MODULE DE RENSEIGNEMENT : API-FOOTBALL
