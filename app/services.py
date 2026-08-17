@@ -58,7 +58,7 @@ class AIRiskManager:
             return AIAuditReport(confidence_score=base_confidence, justification="VETO - Match trop serré.", is_approved=False)
 
         prompt = f"""
-        Tu es le gestionnaire des risques d'un algorithme. Match : {match.home_team} vs {match.away_team}.
+        Tu es le gestionnaire des risques d'un algorithme de paris. Match : {match.home_team} vs {match.away_team}.
         DONNÉES STATISTIQUES :
         - Victoire {match.home_team} : {round(sim.proba_home, 1)}%
         - Match Nul : {round(sim.proba_draw, 1)}%
@@ -66,8 +66,8 @@ class AIRiskManager:
         - Plus de 2.5 buts : {round(sim.proba_over_2_5, 1)}%
         - Les deux marquent (BTTS) : {round(sim.proba_btts, 1)}%
         
-        Mission : Détermine si ce match est prévisible. Si oui, réponds ACCEPT. Sinon, VETO.
-        Renvoie UNIQUEMENT un JSON strict : {{"decision": "ACCEPT" ou "VETO", "reason": "Avis court"}}
+        Mission : Détermine si ce match est prévisible. 
+        Réponds UNIQUEMENT par le mot ACCEPT si le match est bon à jouer, ou par le mot VETO si c'est trop risqué. Ne rajoute AUCUN autre mot.
         """
 
         try:
@@ -75,20 +75,20 @@ class AIRiskManager:
                 response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}]}, timeout=12.0
+                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}, timeout=12.0
                 )
                 if response.status_code == 200:
-                    content = response.json()['choices'][0]['message']['content'].strip()
-                    s, e = content.find('{'), content.rfind('}')
-                    if s != -1 and e != -1:
-                        data = json.loads(content[s:e+1])
-                        if data.get("decision") == "ACCEPT":
-                            return AIAuditReport(confidence_score=base_confidence, justification=data.get("reason", "OK"), is_approved=True)
-                        return AIAuditReport(confidence_score=base_confidence, justification="VETO IA", is_approved=False)
+                    # Extraction robuste en texte brut
+                    content = response.json()['choices'][0]['message']['content'].strip().upper()
+                    
+                    if "ACCEPT" in content:
+                        return AIAuditReport(confidence_score=base_confidence, justification="Approuvé par l'IA.", is_approved=True)
+                    return AIAuditReport(confidence_score=base_confidence, justification="VETO IA", is_approved=False)
         except Exception as e:
             logger.error(f"Erreur IA : {e}")
             
         return AIAuditReport(confidence_score=base_confidence, justification="Approuvé par sécurité (IA hors ligne).", is_approved=True)
+
 
 class MarketAnalyzer:
     def generate_candidates(self, match: MatchData, sim: SimulationResult, bookmaker_odds: dict) -> List[dict]:
