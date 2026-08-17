@@ -15,7 +15,7 @@ from app.services import pipeline
 from app.bot import bot, dp
 
 # 🔑 TA CLÉ THE ODDS (Laisse la tienne ici)
-API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
+API_KEY_ODDS = "820b68b7e046cb5241ce0851adf0bfb6"
 
 async def fetch_real_odds_matches() -> list:
     url_odds = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h,totals"
