@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from app.core import settings, logger
 import app.core as core_module
 from app.models import MatchData, SportType
-# 🟢 INTEGRATION DU MOTEUR 2 : AdversarialEngine
+# 🟢 INTEGRATION DU SYSTEME A 2 MOTEURS
 from app.services import DixonColesEngine, AdversarialEngine, TicketFactory
 from app.bot import bot, dp
 
-# Instanciation des services avec le Système à 2 Moteurs
+# Instanciation des services
 soccer_engine = DixonColesEngine()   # Moteur 1 : Calculs statistiques bruts
 ai_manager = AdversarialEngine()      # Moteur 2 : Auditeur & Chasseur de failles
 ticket_factory = TicketFactory()      # Usine à coupons (Anti-doublons & Cotes filtrées)
@@ -23,41 +23,55 @@ ticket_factory = TicketFactory()      # Usine à coupons (Anti-doublons & Cotes 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 
 async def fetch_real_odds_matches() -> list:
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
+    # 🟢 Utilisation de 'upcoming' pour récupérer tous les matchs à venir
+    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
-    today_str = datetime.now().strftime("%Y-%m-%d")
     
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=20.0)
+            logger.info(f"📡 Réponse API Odds Code : {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
+                logger.info(f"📊 Nombre d'événements bruts reçus : {len(data)}")
+                
                 for m in data:
-                    commence_time = m.get('commence_time', '')
-                    if not commence_time.startswith(today_str):
+                    # Filtre : On ne prend que le Football / Soccer
+                    sport_key = m.get('sport_key', '')
+                    if not sport_key.startswith('soccer'):
                         continue
                         
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
-                        cotes = {c['name']: c['price'] for c in m['bookmakers'][0]['markets'][0]['outcomes']}
-                        home, away = m['home_team'], m['away_team']
-                        
-                        if home in cotes and away in cotes and 'Draw' in cotes:
-                            matches.append(MatchData(
-                                match_id=m['id'],
-                                sport=SportType.SOCCER,
-                                league=m['sport_title'],
-                                match_date=datetime.now(),
-                                home_team=home,
-                                away_team=away,
-                                home_odds=cotes[home],
-                                draw_odds=cotes['Draw'],
-                                away_odds=cotes[away]
-                            ))
-                            if len(matches) >= 100:
-                                break
+                        # Recherche d'un bookmaker avec des marchés H2H
+                        for bm in m['bookmakers']:
+                            if 'markets' in bm and len(bm['markets']) > 0:
+                                outcomes = bm['markets'][0].get('outcomes', [])
+                                cotes = {c['name']: c['price'] for c in outcomes}
+                                home, away = m.get('home_team'), m.get('away_team')
+                                
+                                if home in cotes and away in cotes and 'Draw' in cotes:
+                                    matches.append(MatchData(
+                                        match_id=m['id'],
+                                        sport=SportType.SOCCER,
+                                        league=m.get('sport_title', 'Football'),
+                                        match_date=datetime.now(),
+                                        home_team=home,
+                                        away_team=away,
+                                        home_odds=float(cotes[home]),
+                                        draw_odds=float(cotes['Draw']),
+                                        away_odds=float(cotes[away])
+                                    ))
+                                    break # Un seul bookmaker par match suffit
+                                    
+                    if len(matches) >= 100:
+                        break
+            else:
+                logger.error(f"❌ Erreur API Odds ({response.status_code}) : {response.text}")
     except Exception as e:
-        logger.error(f"Erreur API : {e}")
+        logger.error(f"❌ Exception lors de la requête API Odds : {e}")
         
+    logger.info(f"⚽ Matchs de football valides retenus : {len(matches)}")
     return matches
 
 async def run_platform_pipeline():
@@ -82,7 +96,7 @@ async def run_platform_pipeline():
             logger.info(f"✅ Match {match.home_team} vs {match.away_team} VALIDÉ par Moteur 2")
             
         evaluated.append((match, sim, ai_report))
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.3) # Légère pause pour ne pas surcharger l'API Groq
 
     # ÉTape 3 : Construction du portefeuille filtré (Anti-doublons inter-coupons)
     new_portfolio = ticket_factory.build_portfolio(evaluated)
