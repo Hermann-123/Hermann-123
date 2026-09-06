@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 import os
-from datetime import datetime, timezone  # 🟢 IMPORT CORRIGÉ : timezone est présent
+from datetime import datetime, timezone
 from fastapi import FastAPI
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -66,6 +66,7 @@ async def fetch_real_odds_matches() -> list:
                                 cotes = {c['name']: c['price'] for c in outcomes}
                                 home, away = m.get('home_team'), m.get('away_team')
                                 
+                                # 🟢 CORRECTION 'Away' -> cotes[away]
                                 if home in cotes and away in cotes and 'Draw' in cotes:
                                     matches.append(MatchData(
                                         match_id=m['id'],
@@ -76,7 +77,7 @@ async def fetch_real_odds_matches() -> list:
                                         away_team=away,
                                         home_odds=float(cotes[home]),
                                         draw_odds=float(cotes['Draw']),
-                                        away_odds=float(cotes['Away'])
+                                        away_odds=float(cotes[away])
                                     ))
                                     break 
                                     
@@ -96,10 +97,11 @@ async def run_platform_pipeline():
     now_utc = datetime.now(timezone.utc)
     today_str = now_utc.strftime("%Y-%m-%d")
     
-    # Purge automatique des clés périmées des jours précédents
+    # 🧹 Purge automatique des alertes des jours précédents
     anciens_elements = [k for k in core_module.SENT_ALERTS if not k.endswith(today_str)]
     for k in anciens_elements:
         core_module.SENT_ALERTS.remove(k)
+        logger.info(f"🧹 [CACHE] Nettoyage de l'ancienne alerte périmée : {k}")
 
     matches = await fetch_real_odds_matches()
     
@@ -113,7 +115,7 @@ async def run_platform_pipeline():
         ai_report = await ai_manager.audit_and_refine(match, sim)
         
         if ai_report.is_approved:
-            logger.info(f"✅ Match {match.home_team} vs {match.away_team} VALIDÉ")
+            logger.info(f"✅ Match {match.home_team} vs {match.away_team} VALIDÉ par Moteur 2")
             evaluated.append((match, sim, ai_report))
         else:
             logger.info(f"🚫 Match {match.home_team} vs {match.away_team} REJETÉ par Moteur 2")
@@ -154,11 +156,11 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
-    # 🚀 Lancement du premier scan immédiatement au démarrage du serveur
+    # 🚀 Lancement du premier scan immédiatement au démarrage
     asyncio.create_task(run_platform_pipeline())
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_platform_pipeline, 'interval', minutes=10) # Reprise des scans toutes les 10 mins
+    scheduler.add_job(run_platform_pipeline, 'interval', minutes=10)
     scheduler.start()
     
     bot_task = asyncio.create_task(dp.start_polling(bot))
