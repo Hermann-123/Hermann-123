@@ -26,9 +26,10 @@ async def fetch_real_odds_matches() -> list:
     url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
     
-    # 🟢 DATE DU JOUR STRICTE (Format ISO de base renvoyé par l'API : YYYY-MM-DD)
-    today_date_str = datetime.now().strftime("%Y-%m-%d")
-    logger.info(f"📅 [FILTRE DATE] Recherche exclusive des matchs prévus aujourd'hui : {today_date_str}")
+    # 🟢 HEURE ACTUELLE UTC DE RÉFÉRENCE
+    now_utc = datetime.now(timezone.utc)
+    today_date_str = now_utc.strftime("%Y-%m-%d")
+    logger.info(f"📅 [FILTRE TEMPOREL] Heure actuelle UTC : {now_utc.strftime('%Y-%m-%d %H:%M:%S')} - Recherche exclusive des matchs futurs d'aujourd'hui.")
     
     try:
         async with httpx.AsyncClient() as client:
@@ -45,17 +46,24 @@ async def fetch_real_odds_matches() -> list:
                     if not sport_key.startswith('soccer'):
                         continue
                     
-                    # 🛑 VÉRIFICATION DE LA DATE DU MATCH (Évite les matchs passés ou d'un autre jour)
                     commence_time_str = m.get('commence_time', '') # Exemple : "2026-09-06T15:00:00Z"
-                    if not commence_time_str.startswith(today_date_str):
-                        # Le match n'est pas aujourd'hui, on l'ignore catégoriquement
+                    if not commence_time_str:
                         continue
 
                     try:
                         match_datetime = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
                     except Exception:
-                        match_datetime = datetime.now()
+                        continue
                         
+                    # 🛑 FILTRE 1 : Le match doit impérativement se jouer aujourd'hui
+                    if not commence_time_str.startswith(today_date_str):
+                        continue
+
+                    # 🛑 FILTRE 2 CRITIQUE : Le match ne doit PAS avoir déjà débuté (il doit être dans le futur par rapport à l'heure actuelle)
+                    if match_datetime <= now_utc:
+                        # Le match a déjà commencé ou est déjà passé, on l'ignore
+                        continue
+
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
                         for bm in m['bookmakers']:
                             if 'markets' in bm and len(bm['markets']) > 0:
@@ -68,12 +76,12 @@ async def fetch_real_odds_matches() -> list:
                                         match_id=m['id'],
                                         sport=SportType.SOCCER,
                                         league=m.get('sport_title', 'Football'),
-                                        match_date=match_datetime, # 🟢 Date exacte du match du jour
+                                        match_date=match_datetime,
                                         home_team=home,
                                         away_team=away,
                                         home_odds=float(cotes[home]),
                                         draw_odds=float(cotes['Draw']),
-                                        away_odds=float(cotes[away])
+                                        away_odds=float(cotes['Away'])
                                     ))
                                     break 
                                     
@@ -84,7 +92,7 @@ async def fetch_real_odds_matches() -> list:
     except Exception as e:
         logger.error(f"❌ Exception lors de la requête API Odds : {e}")
         
-    logger.info(f"⚽ Matchs de football valides du jour ({today_date_str}) retenus : {len(matches)}")
+    logger.info(f"⚽ Matchs à venir valides pour aujourd'hui retenus : {len(matches)}")
     return matches
 
 
