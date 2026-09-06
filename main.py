@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI):
         except: pass
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_platform_pipeline, 'interval', minutes=45) # Scan toutes les 45 mins
+    scheduler.add_job(run_platform_pipeline, 'interval', minutes=10) # Scan toutes les 10 mins
     scheduler.start()
     
     asyncio.create_task(run_platform_pipeline())
