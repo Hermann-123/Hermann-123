@@ -108,12 +108,11 @@ class AdversarialEngine:
         except Exception as e:
             logger.error(f"Erreur Moteur 2 Groq : {e}")
 
-        # En cas de problème réseau ou d'API, on applique le fallback de sécurité
         return AIAuditReport(confidence_score=base_confidence, justification="Audit Moteur 2 : Indicateurs au vert.", is_approved=True)
 
 
 # =====================================================================
-# 3️⃣ CRÉATEUR DE PORTFEUILLE & SÉLECTION DES MEILLEURS PRONOSTICS
+# 3️⃣ CRÉATEUR DE PORTFEUILLE & SÉLECTION FLEXIBLE DES PRONOSTICS
 # =====================================================================
 class TicketFactory:
     def build_portfolio(self, evaluated_matches: List[Tuple[MatchData, SimulationResult, AIAuditReport]]):
@@ -126,23 +125,23 @@ class TicketFactory:
             
             p_home, p_draw, p_away = sim.proba_home, sim.proba_draw, sim.proba_away
 
-            if p_home >= 58.0:
-                pool.append({"match": match, "type": f"Victoire {match.home_team}", "odds": max(1.30, round(100.0/p_home*0.92, 2)), "proba": p_home, "ai": ai.justification})
-            elif p_away >= 58.0:
-                pool.append({"match": match, "type": f"Victoire {match.away_team}", "odds": max(1.30, round(100.0/p_away*0.92, 2)), "proba": p_away, "ai": ai.justification})
+            if p_home >= 52.0:
+                pool.append({"match": match, "type": f"Victoire {match.home_team}", "odds": max(1.25, round(100.0/p_home*0.92, 2)), "proba": p_home, "ai": ai.justification})
+            elif p_away >= 52.0:
+                pool.append({"match": match, "type": f"Victoire {match.away_team}", "odds": max(1.25, round(100.0/p_away*0.92, 2)), "proba": p_away, "ai": ai.justification})
 
-            if 75.0 <= (p_home + p_draw) < 88.0:
-                pool.append({"match": match, "type": f"Double Chance (1X) : {match.home_team} ou Nul", "odds": max(1.20, round(100.0/(p_home+p_draw)*0.92, 2)), "proba": p_home+p_draw, "ai": "Moteur 2 : Sécurité garantie sur l'avantage terrain."})
-            if 75.0 <= (p_away + p_draw) < 88.0:
-                pool.append({"match": match, "type": f"Double Chance (X2) : {match.away_team} ou Nul", "odds": max(1.20, round(100.0/(p_away+p_draw)*0.92, 2)), "proba": p_away+p_draw, "ai": "Moteur 2 : L'équipe visiteuse assurera au moins un point."})
+            if 70.0 <= (p_home + p_draw) < 88.0:
+                pool.append({"match": match, "type": f"Double Chance (1X) : {match.home_team} ou Nul", "odds": max(1.18, round(100.0/(p_home+p_draw)*0.92, 2)), "proba": p_home+p_draw, "ai": "Moteur 2 : Sécurité garantie sur l'avantage terrain."})
+            if 70.0 <= (p_away + p_draw) < 88.0:
+                pool.append({"match": match, "type": f"Double Chance (X2) : {match.away_team} ou Nul", "odds": max(1.18, round(100.0/(p_away+p_draw)*0.92, 2)), "proba": p_away+p_draw, "ai": "Moteur 2 : L'équipe visiteuse assurera au moins un point."})
 
-            if sim.proba_over_1_5 >= 78.0:
-                pool.append({"match": match, "type": "Plus de 1,5 buts dans le match", "odds": max(1.22, round(100.0/sim.proba_over_1_5*0.92, 2)), "proba": sim.proba_over_1_5, "ai": "Moteur 2 : Flux offensif régulier confirmé."})
-            if sim.proba_over_2_5 >= 62.0:
-                pool.append({"match": match, "type": "Plus de 2,5 buts dans le match", "odds": max(1.55, round(100.0/sim.proba_over_2_5*0.92, 2)), "proba": sim.proba_over_2_5, "ai": "Moteur 2 : Match ouvert à fort potentiel de buts."})
+            if sim.proba_over_1_5 >= 72.0:
+                pool.append({"match": match, "type": "Plus de 1,5 buts dans le match", "odds": max(1.18, round(100.0/sim.proba_over_1_5*0.92, 2)), "proba": sim.proba_over_1_5, "ai": "Moteur 2 : Flux offensif régulier confirmé."})
+            if sim.proba_over_2_5 >= 58.0:
+                pool.append({"match": match, "type": "Plus de 2,5 buts dans le match", "odds": max(1.45, round(100.0/sim.proba_over_2_5*0.92, 2)), "proba": sim.proba_over_2_5, "ai": "Moteur 2 : Match ouvert à fort potentiel de buts."})
 
-            if sim.proba_btts >= 64.0:
-                pool.append({"match": match, "type": "Les 2 équipes marquent (BTTS)", "odds": max(1.65, round(100.0/sim.proba_btts*0.92, 2)), "proba": sim.proba_btts, "ai": "Moteur 2 : Porosité défensive constatée des deux côtés."})
+            if sim.proba_btts >= 60.0:
+                pool.append({"match": match, "type": "Les 2 équipes marquent (BTTS)", "odds": max(1.55, round(100.0/sim.proba_btts*0.92, 2)), "proba": sim.proba_btts, "ai": "Moteur 2 : Porosité défensive constatée des deux côtés."})
 
         used_match_ids = set()
 
@@ -172,21 +171,21 @@ class TicketFactory:
                         return combo
             return None
 
-        # 🌟 1. COMBINÉ DU JOUR
-        combo_jour = get_best_combo(pool, min_odds=2.0, max_odds=3.5, min_items=2, max_items=3, min_proba_threshold=75.0, min_single_odds=1.25)
+        # 🌟 1. COMBINÉ DU JOUR (Cotes totales >= 1.60, min 2 matchs ou 1 pari solide)
+        combo_jour = get_best_combo(pool, min_odds=1.60, max_odds=4.0, min_items=2, max_items=3, min_proba_threshold=65.0, min_single_odds=1.18)
         if combo_jour:
             portfolio[TicketCategory.ULTRA_SAFE].append(self._format_combo(combo_jour, TicketCategory.ULTRA_SAFE, "🌟 COMBINÉ DU JOUR (SÉCURITÉ MAX)"))
 
-        # 💎 2. COMBINÉ VIP
-        combo_vip = get_best_combo(pool, min_odds=3.2, max_odds=6.0, min_items=3, max_items=4, min_proba_threshold=63.0, min_single_odds=1.35)
+        # 💎 2. COMBINÉ VIP (Cotes totales >= 2.5)
+        combo_vip = get_best_combo(pool, min_odds=2.5, max_odds=6.0, min_items=2, max_items=4, min_proba_threshold=60.0, min_single_odds=1.25)
         if combo_vip:
             portfolio[TicketCategory.VIP].append(self._format_combo(combo_vip, TicketCategory.VIP, "💎 COMBINÉ VIP (RENTABILITÉ)"))
 
-        # 🚀 3. VALUE BET
-        combo_value = get_best_combo(pool, min_odds=7.0, max_odds=30.0, min_items=4, max_items=6, min_proba_threshold=50.0, min_single_odds=1.45)
+        # 🚀 3. VALUE BET / OPPORTUNITÉ (Accepte aussi les paris simples si peu de matchs)
+        combo_value = get_best_combo(pool, min_odds=1.45, max_odds=30.0, min_items=1, max_items=5, min_proba_threshold=50.0, min_single_odds=1.35)
         if combo_value:
             cat_val = getattr(TicketCategory, 'VALUE_BET', getattr(TicketCategory, 'VALUE', TicketCategory.VIP))
-            portfolio[cat_val].append(self._format_combo(combo_value, cat_val, "🚀 VALUE BET (GROSSE COTE)"))
+            portfolio[cat_val].append(self._format_combo(combo_value, cat_val, "🚀 VALUE BET (OPPORTUNITÉ)"))
 
         return dict(portfolio)
 
