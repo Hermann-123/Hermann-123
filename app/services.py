@@ -55,13 +55,12 @@ class DixonColesEngine:
 # =====================================================================
 class AdversarialEngine:
     """
-    Ce 2ème moteur prend les prédictions brutes du 1er moteur et cherche
-    activement des failles (pièges, incohérences) pour sortir LE pronostic le plus solide.
+    Audit contradictoire pour détecter les matchs pièges et valider la fiabilité.
     """
     async def audit_and_refine(self, match: MatchData, sim: SimulationResult) -> AIAuditReport:
         base_confidence = max(sim.proba_home, sim.proba_draw, sim.proba_away)
         
-        # Faille #1 : Rejet systématique des matchs indécis
+        # Faille #1 : Rejet systématique des matchs trop indécis sans potentiel de buts
         if base_confidence < 48.0 and sim.proba_over_1_5 < 75.0:
             return AIAuditReport(
                 confidence_score=base_confidence, 
@@ -69,14 +68,14 @@ class AdversarialEngine:
                 is_approved=False
             )
 
-        if not settings.GROQ_API_KEY:
+        api_key = getattr(settings, 'GROQ_API_KEY', None)
+        if not api_key:
             return AIAuditReport(
                 confidence_score=base_confidence, 
-                justification="Validé par l'audit de sécurité 2nd niveau.", 
+                justification="Validé par l'audit de sécurité 2nd niveau (Clé IA absente).", 
                 is_approved=True
             )
 
-        # Prompt contradictoire : On demande à l'IA d'ATTAQUER le pronostic du 1er moteur
         prompt = f"""
         ANALYSE CONTRADICTOIRE (MOTEUR 2 - CHASSEUR DE FAILLES) :
         Match : {match.home_team} vs {match.away_team}
@@ -92,8 +91,11 @@ class AdversarialEngine:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}]}, 
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": "llama-3.1-8b-instant", 
+                        "messages": [{"role": "user", "content": prompt}]
+                    }, 
                     timeout=10.0
                 )
                 if response.status_code == 200:
@@ -101,9 +103,12 @@ class AdversarialEngine:
                     if ans.upper().startswith("VETO"):
                         return AIAuditReport(confidence_score=0.0, justification=ans, is_approved=False)
                     return AIAuditReport(confidence_score=round(base_confidence, 1), justification=ans, is_approved=True)
+                else:
+                    logger.error(f"Erreur API Groq ({response.status_code}) : {response.text}")
         except Exception as e:
-            logger.error(f"Erreur Moteur 2 Groq: {e}")
+            logger.error(f"Erreur Moteur 2 Groq : {e}")
 
+        # En cas de problème réseau ou d'API, on applique le fallback de sécurité
         return AIAuditReport(confidence_score=base_confidence, justification="Audit Moteur 2 : Indicateurs au vert.", is_approved=True)
 
 
@@ -115,41 +120,33 @@ class TicketFactory:
         portfolio = defaultdict(list)
         pool = []
         
-        # Filtrage et génération des meilleures opportunités après validation du Moteur 2
         for match, sim, ai in evaluated_matches:
             if not ai.is_approved: 
-                continue # Le Moteur 2 a rejeté ce match
+                continue
             
             p_home, p_draw, p_away = sim.proba_home, sim.proba_draw, sim.proba_away
-            base_confidence = max(p_home, p_draw, p_away)
 
-            # 🟢 1. OPTION FAVORIS (Uniquement si confiance solide du Moteur 2)
             if p_home >= 58.0:
                 pool.append({"match": match, "type": f"Victoire {match.home_team}", "odds": max(1.30, round(100.0/p_home*0.92, 2)), "proba": p_home, "ai": ai.justification})
             elif p_away >= 58.0:
                 pool.append({"match": match, "type": f"Victoire {match.away_team}", "odds": max(1.30, round(100.0/p_away*0.92, 2)), "proba": p_away, "ai": ai.justification})
 
-            # 🟢 2. SÉCURITÉ DOUBLE CHANCE (Si le favori peut douter)
             if 75.0 <= (p_home + p_draw) < 88.0:
                 pool.append({"match": match, "type": f"Double Chance (1X) : {match.home_team} ou Nul", "odds": max(1.20, round(100.0/(p_home+p_draw)*0.92, 2)), "proba": p_home+p_draw, "ai": "Moteur 2 : Sécurité garantie sur l'avantage terrain."})
             if 75.0 <= (p_away + p_draw) < 88.0:
                 pool.append({"match": match, "type": f"Double Chance (X2) : {match.away_team} ou Nul", "odds": max(1.20, round(100.0/(p_away+p_draw)*0.92, 2)), "proba": p_away+p_draw, "ai": "Moteur 2 : L'équipe visiteuse assurera au moins un point."})
 
-            # 🟢 3. MARCHÉS BUTS (OVER / UNDER)
             if sim.proba_over_1_5 >= 78.0:
                 pool.append({"match": match, "type": "Plus de 1,5 buts dans le match", "odds": max(1.22, round(100.0/sim.proba_over_1_5*0.92, 2)), "proba": sim.proba_over_1_5, "ai": "Moteur 2 : Flux offensif régulier confirmé."})
             if sim.proba_over_2_5 >= 62.0:
                 pool.append({"match": match, "type": "Plus de 2,5 buts dans le match", "odds": max(1.55, round(100.0/sim.proba_over_2_5*0.92, 2)), "proba": sim.proba_over_2_5, "ai": "Moteur 2 : Match ouvert à fort potentiel de buts."})
 
-            # 🟢 4. BTTS (Les 2 équipes marquent)
             if sim.proba_btts >= 64.0:
                 pool.append({"match": match, "type": "Les 2 équipes marquent (BTTS)", "odds": max(1.65, round(100.0/sim.proba_btts*0.92, 2)), "proba": sim.proba_btts, "ai": "Moteur 2 : Porosité défensive constatée des deux côtés."})
 
-        # --- ALGORITHME DE SELECTION ANTI-DOUBLONS ---
         used_match_ids = set()
 
         def get_best_combo(pool_list, min_odds, max_odds, min_items, max_items, min_proba_threshold=0.0, min_single_odds=1.0):
-            # Filtre par probabilité et cote minimale individuelle
             valid_pool = [
                 p for p in pool_list 
                 if p['proba'] >= min_proba_threshold 
@@ -157,40 +154,38 @@ class TicketFactory:
                 and p['match'].match_id not in used_match_ids
             ]
             
-            # Tri STRICT du pronostic le plus sûr au moins sûr
             valid_pool = sorted(valid_pool, key=lambda x: x['proba'], reverse=True)
 
             for r in range(min_items, max_items + 1):
                 for combo in itertools.combinations(valid_pool[:20], r):
                     match_ids = [x['match'].match_id for x in combo]
                     if len(set(match_ids)) != len(match_ids): 
-                        continue # 1 seul pari par match
+                        continue
                     
                     total_odds = 1.0
                     for x in combo: 
                         total_odds *= x['odds']
                     
                     if min_odds <= total_odds <= max_odds:
-                        # Marquer ces matchs comme utilisés pour éviter les doublons dans les autres tickets
                         for m_id in match_ids:
                             used_match_ids.add(m_id)
                         return combo
             return None
 
-        # 🌟 1. COMBINÉ DU JOUR (Sécurité Maximale : Cotes >= 1.25, Proba >= 75%)
+        # 🌟 1. COMBINÉ DU JOUR
         combo_jour = get_best_combo(pool, min_odds=2.0, max_odds=3.5, min_items=2, max_items=3, min_proba_threshold=75.0, min_single_odds=1.25)
         if combo_jour:
             portfolio[TicketCategory.ULTRA_SAFE].append(self._format_combo(combo_jour, TicketCategory.ULTRA_SAFE, "🌟 COMBINÉ DU JOUR (SÉCURITÉ MAX)"))
 
-        # 💎 2. COMBINÉ VIP (Rentabilité : Cotes >= 1.35, Proba >= 63%, MATCHS DIFFÉRENTS)
+        # 💎 2. COMBINÉ VIP
         combo_vip = get_best_combo(pool, min_odds=3.2, max_odds=6.0, min_items=3, max_items=4, min_proba_threshold=63.0, min_single_odds=1.35)
         if combo_vip:
             portfolio[TicketCategory.VIP].append(self._format_combo(combo_vip, TicketCategory.VIP, "💎 COMBINÉ VIP (RENTABILITÉ)"))
 
-        # 🚀 3. VALUE BET (Grosse Cote : Cotes >= 1.45 EXCLUSIVEMENT, pas de petites cotes 1.15 !)
+        # 🚀 3. VALUE BET
         combo_value = get_best_combo(pool, min_odds=7.0, max_odds=30.0, min_items=4, max_items=6, min_proba_threshold=50.0, min_single_odds=1.45)
         if combo_value:
-            cat_val = TicketCategory.VALUE_BET if hasattr(TicketCategory, 'VALUE_BET') else TicketCategory.VALUE
+            cat_val = getattr(TicketCategory, 'VALUE_BET', getattr(TicketCategory, 'VALUE', TicketCategory.VIP))
             portfolio[cat_val].append(self._format_combo(combo_value, cat_val, "🚀 VALUE BET (GROSSE COTE)"))
 
         return dict(portfolio)
