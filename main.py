@@ -23,9 +23,12 @@ ticket_factory = TicketFactory()      # Usine à coupons (Anti-doublons & Cotes 
 API_KEY_ODDS = "55a670c7b44c3dcc3c9750e9f5c51da1"
 
 async def fetch_real_odds_matches() -> list:
-    # 🟢 Utilisation de 'upcoming' pour récupérer tous les matchs à venir
     url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={API_KEY_ODDS}&regions=eu&markets=h2h"
     matches = []
+    
+    # 🟢 DATE DU JOUR STRICTE (Format ISO de base renvoyé par l'API : YYYY-MM-DD)
+    today_date_str = datetime.now().strftime("%Y-%m-%d")
+    logger.info(f"📅 [FILTRE DATE] Recherche exclusive des matchs prévus aujourd'hui : {today_date_str}")
     
     try:
         async with httpx.AsyncClient() as client:
@@ -41,9 +44,19 @@ async def fetch_real_odds_matches() -> list:
                     sport_key = m.get('sport_key', '')
                     if not sport_key.startswith('soccer'):
                         continue
+                    
+                    # 🛑 VÉRIFICATION DE LA DATE DU MATCH (Évite les matchs passés ou d'un autre jour)
+                    commence_time_str = m.get('commence_time', '') # Exemple : "2026-09-06T15:00:00Z"
+                    if not commence_time_str.startswith(today_date_str):
+                        # Le match n'est pas aujourd'hui, on l'ignore catégoriquement
+                        continue
+
+                    try:
+                        match_datetime = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
+                    except Exception:
+                        match_datetime = datetime.now()
                         
                     if 'bookmakers' in m and len(m['bookmakers']) > 0:
-                        # Recherche d'un bookmaker avec des marchés H2H
                         for bm in m['bookmakers']:
                             if 'markets' in bm and len(bm['markets']) > 0:
                                 outcomes = bm['markets'][0].get('outcomes', [])
@@ -55,14 +68,14 @@ async def fetch_real_odds_matches() -> list:
                                         match_id=m['id'],
                                         sport=SportType.SOCCER,
                                         league=m.get('sport_title', 'Football'),
-                                        match_date=datetime.now(),
+                                        match_date=match_datetime, # 🟢 Date exacte du match du jour
                                         home_team=home,
                                         away_team=away,
                                         home_odds=float(cotes[home]),
                                         draw_odds=float(cotes['Draw']),
                                         away_odds=float(cotes[away])
                                     ))
-                                    break # Un seul bookmaker par match suffit
+                                    break 
                                     
                     if len(matches) >= 100:
                         break
@@ -71,8 +84,9 @@ async def fetch_real_odds_matches() -> list:
     except Exception as e:
         logger.error(f"❌ Exception lors de la requête API Odds : {e}")
         
-    logger.info(f"⚽ Matchs de football valides retenus : {len(matches)}")
+    logger.info(f"⚽ Matchs de football valides du jour ({today_date_str}) retenus : {len(matches)}")
     return matches
+
 
 async def run_platform_pipeline():
     logger.info("🔄 [SCAN] Recherche de nouveaux combinés via le système à 2 Moteurs...")
