@@ -3,14 +3,13 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
 
-class SportType(str, Enum):
+class SportType(Enum):
     SOCCER = "soccer"
     BASKETBALL = "basketball"
 
-class TicketCategory(str, Enum):
+class TicketCategory(Enum):
     ULTRA_SAFE = "Ultra Safe (Sécurité Max)"
     VIP = "VIP (Victoires & DNB)"
-    VALUE_BET = "Value Bets (Grosse Cote)"  # 🟢 Alignement avec TicketFactory
     VALUE = "Value Bets (Buts, Scores & Handicaps)"
     MARKETS = "Marchés Spéciaux (Corners & Mi-temps)"
 
@@ -24,12 +23,6 @@ class MatchData(BaseModel):
     home_odds: float = 1.90
     draw_odds: float = 3.40
     away_odds: float = 3.80
-    
-    # 🛡️ BOUCLIER ANTI-CRASH : Valeurs par défaut neutres
-    home_recent_scores: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
-    home_recent_conceded: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
-    away_recent_scores: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
-    away_recent_conceded: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0]
 
 class SimulationResult(BaseModel):
     match_id: str
